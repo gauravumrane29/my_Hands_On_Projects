@@ -4,6 +4,10 @@
 **Last Updated**: October 15, 2025  
 **Architecture Type**: Cloud-Native, Microservices, Full-Stack
 
+Read ARCHITECTURE_UPDATE_SUMMARY.md first to understand what's in ARCHITECTURE.md
+Use ARCHITECTURE.md for all technical details and implementation
+Refer to DEDUPLICATION_ANALYSIS.md for the complete analysis report
+
 ---
 
 ## Table of Contents
