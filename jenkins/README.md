@@ -1,5 +1,7 @@
 # Jenkins CI/CD Pipeline Documentation
 
+> 📋 **Note**: For details about recent folder cleanup and file organization, see [JENKINS_CLEANUP_ANALYSIS.md](./JENKINS_CLEANUP_ANALYSIS.md)
+
 ## Overview
 
 This Jenkins CI/CD setup provides a comprehensive pipeline solution for the DevOps microservice project, featuring:
