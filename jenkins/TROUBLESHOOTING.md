@@ -4,7 +4,71 @@
 
 ---
 
-## 1. ❌ Invalid Option Type Errors
+## 1. ❌ Tool Configuration Errors
+
+### Error: "Tool type 'maven' does not have an install of 'Maven-3.9' configured"
+
+```
+Tool type "maven" does not have an install of "Maven-3.9" configured 
+- did you mean "null"? @ line 8, column 15.
+maven 'Maven-3.9'
+```
+
+**Cause:** Maven tool not configured in Global Tool Configuration
+
+**Solutions:**
+
+**Option A: Use Auto-Installation (Recommended - Already Implemented):**
+```groovy
+// Tools section removed from Jenkinsfile
+// Pipeline now auto-installs tools in "Setup Build Tools" stage
+```
+
+**Option B: Configure Tools Manually:**
+```bash
+1. Manage Jenkins → Global Tool Configuration
+2. Maven Installations → Add Maven
+   - Name: Maven-3.9
+   - Install automatically: ✓
+   - Version: 3.9.5
+3. Save and re-run pipeline
+```
+
+**Status:** ✅ **FIXED** - Auto-installation implemented
+
+---
+
+### Error: "Invalid tool type 'nodejs'"
+
+```
+Invalid tool type "nodejs". Valid tool types: [maven, jdk, git, ...]
+nodejs 'NodeJS-18'
+```
+
+**Cause:** NodeJS plugin not installed
+
+**Solutions:**
+
+**Option A: Use Auto-Installation (Recommended - Already Implemented):**
+```groovy
+// NodeJS auto-installed in "Setup Build Tools" stage
+// No plugin required
+```
+
+**Option B: Install NodeJS Plugin:**
+```bash
+1. Manage Jenkins → Manage Plugins → Available
+2. Search "NodeJS" → Install without restart
+3. Manage Jenkins → Global Tool Configuration
+4. NodeJS Installations → Add NodeJS
+   - Name: NodeJS-18
+   - Install automatically: ✓
+   - Version: 18.17.1
+```
+
+**Status:** ✅ **FIXED** - Auto-installation implemented
+
+---
 
 ### Error: "Invalid option type 'ansiColor'"
 
@@ -13,7 +77,7 @@ org.codehaus.groovy.control.MultipleCompilationErrorsException: startup failed:
 WorkflowScript: 12: Invalid option type "ansiColor". Valid option types: [...]
 ```
 
-**Cause:** Plugin not installed
+**Cause:** AnsiColor plugin not installed
 
 **Solution:**
 ```bash

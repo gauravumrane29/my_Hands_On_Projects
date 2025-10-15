@@ -1,9 +1,12 @@
 # Jenkins CI/CD Pipeline Documentation
 
 > 📋 **Quick Links**: 
-> - [Plugin Installation Guide](./PLUGIN_INSTALLATION.md) - Fix "Invalid option type" errors
-> - [Troubleshooting Guide](./TROUBLESHOOTING.md) - Common errors and solutions
-> - [Folder Cleanup Analysis](./JENKINS_CLEANUP_ANALYSIS.md) - File organization details
+> - 🚀 **[Quick Start](./QUICK_START.md)** - Get running in 5 minutes
+> - 🔧 **[Tool Config Fix](./TOOL_CONFIGURATION_ERROR_FIX.md)** - Fix Maven/NodeJS errors
+> - 🔌 **[Plugin Installation](./PLUGIN_INSTALLATION.md)** - Install required plugins
+> - 🩺 **[Troubleshooting](./TROUBLESHOOTING.md)** - Common errors and solutions
+> - 🛠️ **[Agent Setup](./AGENT_SETUP_GUIDE.md)** - Configure Jenkins agents
+> - 📁 **[Cleanup Analysis](./JENKINS_CLEANUP_ANALYSIS.md)** - File organization details
 
 ## Overview
 
