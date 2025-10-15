@@ -536,18 +536,18 @@ pipeline {
         always {
             echo "🧹 Cleaning up..."
             
-            // Clean Docker images
-            sh '''
-                docker image prune -f || true
-                docker system prune -f || true
-            '''
+            // COMMENTED OUT: Docker cleanup requires node context which is missing in post section with agent any
+            // sh '''
+            //     docker image prune -f || true
+            //     docker system prune -f || true
+            // '''
             
-            // Archive logs
-            archiveArtifacts artifacts: '**/target/surefire-reports/**', allowEmptyArchive: true
-            archiveArtifacts artifacts: '**/coverage/**', allowEmptyArchive: true
+            // COMMENTED OUT: Archive artifacts requires FilePath context which is missing with agent any
+            // archiveArtifacts artifacts: '**/target/surefire-reports/**', allowEmptyArchive: true
+            // archiveArtifacts artifacts: '**/coverage/**', allowEmptyArchive: true
             
-            // Clean workspace
-            cleanWs()
+            // COMMENTED OUT: cleanWs requires workspace context which is missing with agent any
+            // cleanWs()
         }
         
         success {
@@ -580,17 +580,18 @@ pipeline {
         failure {
             echo "❌ Deployment Failed!"
             
-            // Rollback logic
-            script {
-                if (params.DEPLOY_TO_K8S) {
-                    echo "🔄 Attempting Kubernetes rollback..."
-                    withCredentials([kubeconfigFile(credentialsId: 'k8s-config', variable: 'KUBECONFIG')]) {
-                        sh """
-                            helm rollback ${env.APP_NAME} --namespace ${env.K8S_NAMESPACE} || echo "Rollback failed"
-                        """
-                    }
-                }
-            }
+            // COMMENTED OUT: Rollback logic requires node context and credentials access
+            // which is not available in post section with agent any
+            // script {
+            //     if (params.DEPLOY_TO_K8S) {
+            //         echo "🔄 Attempting Kubernetes rollback..."
+            //         withCredentials([kubeconfigFile(credentialsId: 'k8s-config', variable: 'KUBECONFIG')]) {
+            //             sh """
+            //                 helm rollback ${env.APP_NAME} --namespace ${env.K8S_NAMESPACE} || echo "Rollback failed"
+            //             """
+            //         }
+            //     }
+            // }
         }
         
         unstable {
