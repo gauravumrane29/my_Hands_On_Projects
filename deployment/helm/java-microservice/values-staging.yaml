@@ -1,0 +1,234 @@
+# Staging Environment Configuration
+# Similar to production but with reduced scale and relaxed constraints
+
+app:
+  name: java-microservice
+  version: "staging-2.0.0"
+
+# Backend Configuration for Staging
+backend:
+  enabled: true
+  image:
+    tag: "staging-latest"
+    pullPolicy: Always
+  ecr:
+    accountId: "STAGING_ACCOUNT_ID"
+    repositoryName: java-microservice-backend-staging
+  deployment:
+    replicaCount: 2
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 50%
+        maxSurge: 50%
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1.5Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    SPRING_PROFILES_ACTIVE: staging
+    JAVA_OPTS: "-Xmx1g -Xms512m -XX:+UseG1GC -XX:+UseStringDeduplication"
+
+# Frontend Configuration for Staging
+frontend:
+  enabled: true
+  image:
+    tag: "staging-latest"
+    pullPolicy: Always
+  ecr:
+    accountId: "STAGING_ACCOUNT_ID"
+    repositoryName: java-microservice-frontend-staging
+  deployment:
+    replicaCount: 2
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 50%
+        maxSurge: 50%
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# Database Configuration for Staging
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "staging-postgres"
+    username: "postgres"
+    password: "staging-postgres"
+    database: "demoapp_staging"
+  architecture: standalone
+  primary:
+    persistence:
+      enabled: true
+      size: 5Gi
+      storageClass: "gp3"
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 250m
+        memory: 256Mi
+
+# Redis Configuration for Staging
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+  master:
+    persistence:
+      enabled: true
+      size: 2Gi
+      storageClass: "gp3"
+    resources:
+      limits:
+        cpu: 200m
+        memory: 256Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+# HPA Configuration for Staging (moderate)
+hpa:
+  backend:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 75
+  frontend:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 75
+
+# Pod Disruption Budget for Staging (moderate)
+podDisruptionBudget:
+  backend:
+    enabled: true
+    minAvailable: 1
+  frontend:
+    enabled: true
+    minAvailable: 1
+
+# Ingress Configuration for Staging
+ingress:
+  enabled: true
+  className: "alb"
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    alb.ingress.kubernetes.io/healthcheck-path: /actuator/health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '30'
+  hosts:
+    - host: java-microservice-staging.internal.com
+      paths:
+        - path: /api
+          pathType: Prefix
+          backend:
+            service:
+              name: backend
+              port:
+                number: 80
+        - path: /actuator
+          pathType: Prefix
+          backend:
+            service:
+              name: backend
+              port:
+                number: 80
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: frontend
+              port:
+                number: 80
+
+# ConfigMap with staging-specific configuration
+configMap:
+  data:
+    application.yml: |
+      spring:
+        application:
+          name: java-microservice
+        profiles:
+          active: staging
+        datasource:
+          url: jdbc:postgresql://java-microservice-postgresql:5432/demoapp_staging
+          username: postgres
+          password: staging-postgres
+          driver-class-name: org.postgresql.Driver
+          hikari:
+            maximum-pool-size: 15
+            minimum-idle: 3
+            idle-timeout: 300000
+        jpa:
+          hibernate:
+            ddl-auto: validate
+          show-sql: false
+          properties:
+            hibernate:
+              dialect: org.hibernate.dialect.PostgreSQLDialect
+        flyway:
+          enabled: true
+          locations: classpath:db/migration
+          baseline-on-migrate: true
+        redis:
+          host: java-microservice-redis-master
+          port: 6379
+      server:
+        port: 8080
+        shutdown: graceful
+      management:
+        endpoints:
+          web:
+            exposure:
+              include: health,info,prometheus,metrics
+        endpoint:
+          health:
+            show-details: always
+        health:
+          readinessState:
+            enabled: true
+          livenessState:
+            enabled: true
+      logging:
+        level:
+          com.example: INFO
+          org.springframework.web: INFO
+          org.hibernate: WARN
+
+# Staging resource quotas (balanced)
+resources:
+  requests:
+    cpu: 700m
+    memory: 1Gi
+  limits:
+    cpu: 1500m
+    memory: 2Gi
+
+# Staging-specific node selection
+nodeSelector:
+  kubernetes.io/os: linux
+  node.kubernetes.io/instance-type: "t3.medium"
+
+# Monitoring enabled for staging
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+    interval: 30s

@@ -1,0 +1,237 @@
+{
+  "agent": {
+    "metrics_collection_interval": 60,
+    "run_as_user": "cwagent",
+    "region": "us-east-1",
+    "debug": false
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/opt/java-microservice/logs/backend/application.log",
+            "log_group_name": "/aws/ec2/java-microservice/backend",
+            "log_stream_name": "{instance_id}/backend-application",
+            "retention_in_days": 30,
+            "timezone": "UTC",
+            "multi_line_start_pattern": "\\d{4}-\\d{2}-\\d{2}"
+          },
+          {
+            "file_path": "/opt/java-microservice/logs/backend/spring.log",
+            "log_group_name": "/aws/ec2/java-microservice/backend",
+            "log_stream_name": "{instance_id}/backend-spring",
+            "retention_in_days": 14,
+            "timezone": "UTC",
+            "multi_line_start_pattern": "\\d{4}-\\d{2}-\\d{2}"
+          },
+          {
+            "file_path": "/var/log/nginx/access.log",
+            "log_group_name": "/aws/ec2/java-microservice/frontend",
+            "log_stream_name": "{instance_id}/nginx-access",
+            "retention_in_days": 14,
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/var/log/nginx/error.log",
+            "log_group_name": "/aws/ec2/java-microservice/frontend",
+            "log_stream_name": "{instance_id}/nginx-error",
+            "retention_in_days": 30,
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/var/log/docker/*.log",
+            "log_group_name": "/aws/ec2/java-microservice/docker",
+            "log_stream_name": "{instance_id}/docker-{hostname}",
+            "retention_in_days": 14,
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/var/log/postgresql/postgresql-*.log",
+            "log_group_name": "/aws/ec2/java-microservice/database",
+            "log_stream_name": "{instance_id}/postgresql",
+            "retention_in_days": 30,
+            "timezone": "UTC",
+            "multi_line_start_pattern": "\\d{4}-\\d{2}-\\d{2}"
+          },
+          {
+            "file_path": "/var/log/redis/redis-server.log",
+            "log_group_name": "/aws/ec2/java-microservice/cache",
+            "log_stream_name": "{instance_id}/redis",
+            "retention_in_days": 14,
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/var/log/syslog",
+            "log_group_name": "/aws/ec2/system",
+            "log_stream_name": "{instance_id}/syslog",
+            "retention_in_days": 7,
+            "timezone": "UTC"
+          }
+        ]
+      }
+    }
+  },
+  "metrics": {
+    "namespace": "JavaMicroservice/EC2",
+    "append_dimensions": {
+      "AutoScalingGroupName": "${aws:AutoScalingGroupName}",
+      "ImageId": "${aws:ImageId}",
+      "InstanceId": "${aws:InstanceId}",
+      "InstanceType": "${aws:InstanceType}",
+      "Environment": "production"
+    },
+    "aggregation_dimensions": [
+      ["InstanceId"],
+      ["InstanceType"],
+      ["AutoScalingGroupName"],
+      ["Environment"]
+    ],
+    "metrics_collected": {
+      "cpu": {
+        "measurement": [
+          {
+            "name": "cpu_usage_idle",
+            "rename": "CPU_USAGE_IDLE",
+            "unit": "Percent"
+          },
+          {
+            "name": "cpu_usage_iowait", 
+            "rename": "CPU_USAGE_IOWAIT",
+            "unit": "Percent"
+          },
+          {
+            "name": "cpu_usage_user",
+            "rename": "CPU_USAGE_USER", 
+            "unit": "Percent"
+          },
+          {
+            "name": "cpu_usage_system",
+            "rename": "CPU_USAGE_SYSTEM",
+            "unit": "Percent"
+          }
+        ],
+        "metrics_collection_interval": 60,
+        "totalcpu": false
+      },
+      "disk": {
+        "measurement": [
+          {
+            "name": "used_percent",
+            "rename": "DISK_USED_PERCENT",
+            "unit": "Percent"
+          },
+          {
+            "name": "inodes_free",
+            "rename": "DISK_INODES_FREE",
+            "unit": "Count"
+          }
+        ],
+        "metrics_collection_interval": 60,
+        "resources": [
+          "*"
+        ]
+      },
+      "diskio": {
+        "measurement": [
+          {
+            "name": "io_time",
+            "rename": "DISKIO_IO_TIME",
+            "unit": "Milliseconds"
+          },
+          {
+            "name": "read_bytes",
+            "rename": "DISKIO_READ_BYTES",
+            "unit": "Bytes"
+          },
+          {
+            "name": "write_bytes",
+            "rename": "DISKIO_WRITE_BYTES", 
+            "unit": "Bytes"
+          },
+          {
+            "name": "reads",
+            "rename": "DISKIO_READS",
+            "unit": "Count"
+          },
+          {
+            "name": "writes",
+            "rename": "DISKIO_WRITES",
+            "unit": "Count"
+          }
+        ],
+        "metrics_collection_interval": 60,
+        "resources": [
+          "*"
+        ]
+      },
+      "mem": {
+        "measurement": [
+          {
+            "name": "mem_used_percent",
+            "rename": "MEMORY_USED_PERCENT",
+            "unit": "Percent"
+          },
+          {
+            "name": "mem_available_percent", 
+            "rename": "MEMORY_AVAILABLE_PERCENT",
+            "unit": "Percent"
+          },
+          {
+            "name": "mem_used",
+            "rename": "MEMORY_USED",
+            "unit": "Bytes"
+          },
+          {
+            "name": "mem_cached",
+            "rename": "MEMORY_CACHED",
+            "unit": "Bytes"
+          }
+        ],
+        "metrics_collection_interval": 60
+      },
+      "netstat": {
+        "measurement": [
+          {
+            "name": "tcp_established",
+            "rename": "TCP_ESTABLISHED_CONNECTIONS",
+            "unit": "Count"
+          },
+          {
+            "name": "tcp_time_wait",
+            "rename": "TCP_TIME_WAIT_CONNECTIONS", 
+            "unit": "Count"
+          }
+        ],
+        "metrics_collection_interval": 60
+      },
+      "processes": {
+        "measurement": [
+          {
+            "name": "running",
+            "rename": "PROCESSES_RUNNING",
+            "unit": "Count"
+          },
+          {
+            "name": "sleeping",
+            "rename": "PROCESSES_SLEEPING", 
+            "unit": "Count"
+          },
+          {
+            "name": "dead",
+            "rename": "PROCESSES_DEAD",
+            "unit": "Count"
+          }
+        ]
+      }
+    }
+  },
+  "traces": {
+    "traces_collected": {
+      "xray": {
+        "bind_address": "127.0.0.1:2000",
+        "tcp_proxy_bind_address": "127.0.0.1:2001"
+      }
+    }
+  }
+}

@@ -1,0 +1,139 @@
+/* UserList.css */
+.user-list {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.no-users {
+  text-align: center;
+  padding: 60px 20px;
+  color: #666;
+  font-size: 1.1rem;
+}
+
+.users-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.users-table thead {
+  background-color: #f5f5f5;
+}
+
+.users-table th {
+  padding: 15px 10px;
+  text-align: left;
+  font-weight: 600;
+  color: #333;
+  border-bottom: 2px solid #e0e0e0;
+}
+
+.users-table td {
+  padding: 12px 10px;
+  border-bottom: 1px solid #f0f0f0;
+  vertical-align: middle;
+}
+
+.users-table tbody tr:hover {
+  background-color: #f9f9f9;
+}
+
+.users-table tbody tr.inactive {
+  opacity: 0.7;
+  background-color: #fafafa;
+}
+
+.status {
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.status.active {
+  background-color: #e8f5e8;
+  color: #2e7d32;
+}
+
+.status.inactive {
+  background-color: #ffebee;
+  color: #c62828;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-start;
+}
+
+.actions button {
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 5px;
+  border-radius: 3px;
+  font-size: 1.1rem;
+  transition: background-color 0.2s;
+  min-width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.edit-btn:hover {
+  background-color: #e3f2fd;
+}
+
+.deactivate-btn:hover {
+  background-color: #fff3e0;
+}
+
+.delete-btn:hover {
+  background-color: #ffebee;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+  .users-table {
+    font-size: 0.85rem;
+  }
+  
+  .users-table th,
+  .users-table td {
+    padding: 8px 5px;
+  }
+  
+  /* Hide some columns on small screens */
+  .users-table th:nth-child(1),
+  .users-table td:nth-child(1),
+  .users-table th:nth-child(6),
+  .users-table td:nth-child(6) {
+    display: none;
+  }
+  
+  .actions {
+    flex-direction: column;
+    gap: 2px;
+  }
+  
+  .actions button {
+    font-size: 0.9rem;
+    min-width: 25px;
+    height: 25px;
+  }
+}
+
+/* Very small screens */
+@media (max-width: 480px) {
+  .user-list {
+    overflow-x: auto;
+  }
+  
+  .users-table {
+    min-width: 600px;
+  }
+}

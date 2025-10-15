@@ -1,0 +1,214 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: java-microservice
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: java-microservice-project
+    app.kubernetes.io/component: argocd-project
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: "Java Microservice Project for multi-environment deployment"
+  
+  # Source repositories
+  sourceRepos:
+    - 'https://github.com/your-org/devops-project.git'
+    - 'https://github.com/your-org/java-microservice.git'
+    - 'https://charts.bitnami.com/bitnami'  # For dependencies
+    
+  # Destination clusters and namespaces
+  destinations:
+    - namespace: development
+      server: https://kubernetes.default.svc
+    - namespace: staging
+      server: https://kubernetes.default.svc
+    - namespace: production
+      server: https://kubernetes.default.svc
+    - namespace: argocd
+      server: https://kubernetes.default.svc
+      
+  # Cluster resource whitelist
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: ""
+      kind: PersistentVolume
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+    - group: networking.k8s.io
+      kind: IngressClass
+    - group: storage.k8s.io
+      kind: StorageClass
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      
+  # Namespace resource whitelist
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: Secret
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: ServiceAccount
+    - group: ""
+      kind: PersistentVolumeClaim
+    - group: apps
+      kind: Deployment
+    - group: apps
+      kind: ReplicaSet
+    - group: apps
+      kind: StatefulSet
+    - group: apps
+      kind: DaemonSet
+    - group: batch
+      kind: Job
+    - group: batch
+      kind: CronJob
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    - group: policy
+      kind: PodDisruptionBudget
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+    - group: rbac.authorization.k8s.io
+      kind: Role
+    - group: rbac.authorization.k8s.io
+      kind: RoleBinding
+    - group: monitoring.coreos.com
+      kind: ServiceMonitor
+    - group: monitoring.coreos.com
+      kind: PodMonitor
+      
+  # Roles for different environments
+  roles:
+    - name: developers
+      description: "Developer access to development environment"
+      policies:
+        - p, proj:java-microservice:developers, applications, get, java-microservice/development, allow
+        - p, proj:java-microservice:developers, applications, sync, java-microservice/development, allow
+        - p, proj:java-microservice:developers, applications, action/*, java-microservice/development, allow
+        - p, proj:java-microservice:developers, repositories, get, https://github.com/your-org/*, allow
+      groups:
+        - developers
+        - devops-team
+        
+    - name: staging-deployers
+      description: "Staging deployment access"
+      policies:
+        - p, proj:java-microservice:staging-deployers, applications, get, java-microservice/staging, allow
+        - p, proj:java-microservice:staging-deployers, applications, sync, java-microservice/staging, allow
+        - p, proj:java-microservice:staging-deployers, applications, action/*, java-microservice/staging, allow
+        - p, proj:java-microservice:staging-deployers, repositories, get, https://github.com/your-org/*, allow
+      groups:
+        - qa-team
+        - devops-team
+        
+    - name: production-deployers
+      description: "Production deployment access (limited)"
+      policies:
+        - p, proj:java-microservice:production-deployers, applications, get, java-microservice/production, allow
+        - p, proj:java-microservice:production-deployers, applications, sync, java-microservice/production, deny
+        - p, proj:java-microservice:production-deployers, repositories, get, https://github.com/your-org/*, allow
+      groups:
+        - devops-team
+        - platform-team
+        
+  # Sync windows for controlled deployments
+  syncWindows:
+    - kind: allow
+      schedule: "0 9-17 * * MON-FRI"  # Business hours weekdays
+      duration: 8h
+      applications:
+        - "*-dev"
+        - "*-staging"
+      manualSync: true
+      
+    - kind: deny
+      schedule: "0 18-8 * * *"  # Outside business hours
+      duration: 14h
+      applications:
+        - "*-prod"
+      manualSync: false
+      
+    - kind: deny
+      schedule: "0 0-23 * * SAT-SUN"  # Weekends
+      duration: 24h
+      applications:
+        - "*-prod"
+      manualSync: false
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: production
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: production-project
+    app.kubernetes.io/component: argocd-project
+    environment: production
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: "Production-only project with enhanced security and approval workflow"
+  
+  sourceRepos:
+    - 'https://github.com/your-org/devops-project.git'
+    
+  destinations:
+    - namespace: production
+      server: https://kubernetes.default.svc
+      
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+      
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: Secret
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: ServiceAccount
+    - group: apps
+      kind: Deployment
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: policy
+      kind: PodDisruptionBudget
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+      
+  roles:
+    - name: production-admins
+      description: "Production administrators"
+      policies:
+        - p, proj:production:production-admins, applications, *, */production, allow
+        - p, proj:production:production-admins, repositories, *, *, allow
+      groups:
+        - platform-team
+        - production-admins
+        
+  syncWindows:
+    - kind: allow
+      schedule: "0 10-16 * * TUE-THU"  # Limited production deployment window
+      duration: 6h
+      applications:
+        - "*"
+      manualSync: true
+      
+    - kind: deny
+      schedule: "0 0-9,17-23 * * *"  # Outside approved hours
+      duration: 17h
+      applications:
+        - "*"
+      manualSync: false

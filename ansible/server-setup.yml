@@ -1,0 +1,967 @@
+---
+# Advanced Ansible Playbook for Complete Server Configuration
+# This playbook configures servers with security, monitoring, and application deployment capabilities
+
+- name: Complete Server Configuration and Application Deployment
+  hosts: all
+  become: yes
+  gather_facts: yes
+  
+  vars:
+    # Application configuration
+    app_name: "java-microservice"
+    app_user: "appuser"
+    backend_port: "8080"
+    frontend_port: "3000"
+    app_jar_path: "/opt/{{ app_name }}/backend/app.jar"
+    
+    # Java configuration
+    java_version: "17"
+    java_home: "/usr/lib/jvm/java-{{ java_version }}-openjdk-amd64"
+    
+    # Database configuration
+    db_host: "{{ hostvars[inventory_hostname]['db_host'] | default('localhost') }}"
+    db_port: "5432"
+    db_name: "demoapp"
+    db_username: "postgres"
+    db_password: "{{ hostvars[inventory_hostname]['db_password'] | default('postgres') }}"
+    
+    # Redis configuration
+    redis_host: "{{ hostvars[inventory_hostname]['redis_host'] | default('localhost') }}"
+    redis_port: "6379"
+    
+    # Frontend configuration
+    frontend_build_path: "/opt/{{ app_name }}/frontend/build"
+    nginx_config_path: "/etc/nginx/sites-available"
+    
+    # Security configuration
+    ssh_port: "22"
+    allowed_users: ["{{ app_user }}", "ec2-user", "ubuntu", "admin"]
+    
+    # Monitoring configuration
+    cloudwatch_region: "us-east-1"
+    log_retention_days: 30
+    
+    # Performance tuning
+    max_open_files: 65535
+    tcp_keepalive_time: 120
+
+  tasks:
+    # ================================
+    # System Updates and Basic Setup
+    # ================================
+    - name: Update package cache (Ubuntu/Debian)
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+      tags: ["system", "updates"]
+
+    - name: Update package cache (RedHat/CentOS)
+      yum:
+        update_cache: yes
+      when: ansible_os_family == "RedHat"
+      tags: ["system", "updates"]
+
+    - name: Install essential packages (Ubuntu/Debian)
+      apt:
+        name:
+          - curl
+          - wget
+          - unzip
+          - git
+          - htop
+          - vim
+          - net-tools
+          - telnet
+          - tcpdump
+          - rsync
+          - logrotate
+          - cron
+          - fail2ban
+          - ufw
+        state: present
+      when: ansible_os_family == "Debian"
+      tags: ["packages", "system"]
+
+    - name: Install essential packages (RedHat/CentOS)
+      yum:
+        name:
+          - curl
+          - wget
+          - unzip
+          - git
+          - htop
+          - vim
+          - net-tools
+          - telnet
+          - tcpdump
+          - rsync
+          - logrotate
+          - cronie
+          - fail2ban
+          - firewalld
+        state: present
+      when: ansible_os_family == "RedHat"
+      tags: ["packages", "system"]
+
+    # ================================
+    # Java Installation and Configuration
+    # ================================
+    - name: Install Java {{ java_version }} (Ubuntu/Debian)
+      apt:
+        name: "openjdk-{{ java_version }}-jdk"
+        state: present
+      when: ansible_os_family == "Debian"
+      tags: ["java"]
+
+    - name: Install Java {{ java_version }} (RedHat/CentOS)
+      yum:
+        name: "java-{{ java_version }}-openjdk-devel"
+        state: present
+      when: ansible_os_family == "RedHat"
+      tags: ["java"]
+
+    # ================================
+    # PostgreSQL Client Installation
+    # ================================
+    - name: Install PostgreSQL client (Ubuntu/Debian)
+      apt:
+        name:
+          - postgresql-client-15
+          - postgresql-contrib
+        state: present
+      when: ansible_os_family == "Debian"
+      tags: ["database"]
+
+    - name: Install PostgreSQL repository (RedHat/CentOS)
+      yum:
+        name: "https://download.postgresql.org/pub/repos/yum/reporpms/EL-{{ ansible_distribution_major_version }}-x86_64/pgdg-redhat-repo-latest.noarch.rpm"
+        state: present
+      when: ansible_os_family == "RedHat"
+      tags: ["database"]
+
+    - name: Install PostgreSQL client (RedHat/CentOS)
+      yum:
+        name:
+          - postgresql15
+          - postgresql15-contrib
+        state: present
+      when: ansible_os_family == "RedHat"
+      tags: ["database"]
+
+    # ================================
+    # Node.js Installation for Frontend
+    # ================================
+    - name: Install Node.js 18 repository key (Ubuntu/Debian)
+      apt_key:
+        url: https://deb.nodesource.com/gpgkey/nodesource.gpg.key
+        state: present
+      when: ansible_os_family == "Debian"
+      tags: ["nodejs"]
+
+    - name: Add Node.js 18 repository (Ubuntu/Debian)
+      apt_repository:
+        repo: "deb https://deb.nodesource.com/node_18.x {{ ansible_distribution_release }} main"
+        state: present
+      when: ansible_os_family == "Debian"
+      tags: ["nodejs"]
+
+    - name: Install Node.js 18 (Ubuntu/Debian)
+      apt:
+        name:
+          - nodejs
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+      tags: ["nodejs"]
+
+    - name: Install Node.js 18 (RedHat/CentOS)
+      shell: |
+        curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo bash -
+        yum install -y nodejs
+      when: ansible_os_family == "RedHat"
+      tags: ["nodejs"]
+
+    - name: Install global npm packages
+      npm:
+        name: "{{ item }}"
+        global: yes
+        state: present
+      loop:
+        - pm2
+        - serve
+      tags: ["nodejs"]
+
+    # ================================
+    # Nginx Installation and Configuration
+    # ================================
+    - name: Install Nginx (Ubuntu/Debian)
+      apt:
+        name: nginx
+        state: present
+      when: ansible_os_family == "Debian"
+      tags: ["nginx"]
+
+    - name: Install Nginx (RedHat/CentOS)
+      yum:
+        name: nginx
+        state: present
+      when: ansible_os_family == "RedHat"
+      tags: ["nginx"]
+
+    - name: Start and enable Nginx service
+      systemd:
+        name: nginx
+        state: started
+        enabled: yes
+      tags: ["nginx"]
+
+    - name: Create Nginx configuration for full-stack app
+      copy:
+        content: |
+          server {
+              listen 80;
+              server_name localhost;
+              root {{ frontend_build_path }};
+              index index.html;
+
+              # Frontend static files
+              location / {
+                  try_files $uri $uri/ /index.html;
+                  expires 1y;
+                  add_header Cache-Control "public, immutable";
+              }
+
+              # Backend API proxy
+              location /api/ {
+                  proxy_pass http://localhost:{{ backend_port }}/api/;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+                  proxy_connect_timeout 30s;
+                  proxy_send_timeout 30s;
+                  proxy_read_timeout 30s;
+              }
+
+              # Health check endpoint
+              location /actuator/ {
+                  proxy_pass http://localhost:{{ backend_port }}/actuator/;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+              }
+
+              # Security headers
+              add_header X-Content-Type-Options nosniff;
+              add_header X-Frame-Options DENY;
+              add_header X-XSS-Protection "1; mode=block";
+          }
+        dest: "{{ nginx_config_path }}/{{ app_name }}"
+        owner: root
+        group: root
+        mode: '0644'
+      tags: ["nginx"]
+
+    - name: Enable site configuration (Ubuntu/Debian)
+      file:
+        src: "{{ nginx_config_path }}/{{ app_name }}"
+        dest: "/etc/nginx/sites-enabled/{{ app_name }}"
+        state: link
+      when: ansible_os_family == "Debian"
+      notify: restart nginx
+      tags: ["nginx"]
+
+    - name: Remove default Nginx site (Ubuntu/Debian)
+      file:
+        path: "/etc/nginx/sites-enabled/default"
+        state: absent
+      when: ansible_os_family == "Debian"
+      notify: restart nginx
+      tags: ["nginx"]
+
+    - name: Configure Nginx for RedHat/CentOS
+      copy:
+        content: |
+          server {
+              listen 80;
+              server_name localhost;
+              root {{ frontend_build_path }};
+              index index.html;
+
+              location / {
+                  try_files $uri $uri/ /index.html;
+              }
+
+              location /api/ {
+                  proxy_pass http://localhost:{{ backend_port }}/api/;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+              }
+
+              location /actuator/ {
+                  proxy_pass http://localhost:{{ backend_port }}/actuator/;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+              }
+          }
+        dest: "/etc/nginx/conf.d/{{ app_name }}.conf"
+        owner: root
+        group: root
+        mode: '0644'
+      when: ansible_os_family == "RedHat"
+      notify: restart nginx
+      tags: ["nginx"]
+
+    - name: Set JAVA_HOME in /etc/environment
+      lineinfile:
+        path: /etc/environment
+        line: "JAVA_HOME={{ java_home }}"
+        create: yes
+      tags: ["java"]
+
+    - name: Set JAVA_HOME for all users
+      copy:
+        content: |
+          export JAVA_HOME={{ java_home }}
+          export PATH=$PATH:$JAVA_HOME/bin
+        dest: /etc/profile.d/java.sh
+        mode: '0644'
+      tags: ["java"]
+
+    # ================================
+    # Application User and Directory Setup
+    # ================================
+    - name: Create application user
+      user:
+        name: "{{ app_user }}"
+        system: yes
+        shell: /bin/bash
+        home: "/home/{{ app_user }}"
+        create_home: yes
+      tags: ["user"]
+
+    - name: Create application directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0755'
+      loop:
+        - "/opt/{{ app_name }}"
+        - "/opt/{{ app_name }}/backend"
+        - "/opt/{{ app_name }}/frontend"
+        - "/opt/{{ app_name }}/frontend/build"
+        - "/opt/{{ app_name }}/logs"
+        - "/opt/{{ app_name }}/config"
+        - "/opt/{{ app_name }}/backup"
+        - "/opt/{{ app_name }}/scripts"
+        - "/var/log/{{ app_name }}"
+      tags: ["directories"]
+
+    # ================================
+    # Database Connection Configuration
+    # ================================
+    - name: Create database connection test script
+      copy:
+        content: |
+          #!/bin/bash
+          echo "Testing PostgreSQL connection..."
+          PGPASSWORD="{{ db_password }}" psql -h "{{ db_host }}" -p "{{ db_port }}" -U "{{ db_username }}" -d "{{ db_name }}" -c "\l"
+          if [ $? -eq 0 ]; then
+              echo "Database connection successful"
+              exit 0
+          else
+              echo "Database connection failed"
+              exit 1
+          fi
+        dest: "/opt/{{ app_name }}/scripts/test-db-connection.sh"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0755'
+      tags: ["database"]
+
+    - name: Create application environment configuration
+      copy:
+        content: |
+          # Database Configuration
+          DB_HOST={{ db_host }}
+          DB_PORT={{ db_port }}
+          DB_NAME={{ db_name }}
+          DB_USERNAME={{ db_username }}
+          DB_PASSWORD={{ db_password }}
+          
+          # Redis Configuration
+          REDIS_HOST={{ redis_host }}
+          REDIS_PORT={{ redis_port }}
+          
+          # Application Configuration
+          SPRING_PROFILES_ACTIVE=production
+          SERVER_PORT={{ backend_port }}
+          JAVA_OPTS="-Xmx1g -Xms512m -XX:+UseG1GC -XX:+UseStringDeduplication"
+          
+          # Frontend Configuration
+          REACT_APP_API_URL=http://localhost/api
+          
+          # Logging Configuration
+          LOGGING_LEVEL_ROOT=INFO
+          LOGGING_FILE_PATH=/opt/{{ app_name }}/logs/application.log
+        dest: "/opt/{{ app_name }}/config/application.env"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0600'
+      tags: ["config"]
+
+    - name: Set up log directory permissions
+      file:
+        path: "/var/log/{{ app_name }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0755'
+      tags: ["logging"]
+
+    # ================================
+    # Docker Installation
+    # ================================
+    - name: Add Docker GPG key (Ubuntu/Debian)
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+      when: ansible_os_family == "Debian"
+      tags: ["docker"]
+
+    - name: Add Docker repository (Ubuntu/Debian)
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+      when: ansible_os_family == "Debian"
+      tags: ["docker"]
+
+    - name: Install Docker (Ubuntu/Debian)
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+      tags: ["docker"]
+
+    - name: Install Docker (RedHat/CentOS)
+      yum:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+      when: ansible_os_family == "RedHat"
+      tags: ["docker"]
+
+    - name: Start and enable Docker service
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+      tags: ["docker"]
+
+    - name: Add application user to docker group
+      user:
+        name: "{{ app_user }}"
+        groups: docker
+        append: yes
+      tags: ["docker"]
+
+    # ================================
+    # CloudWatch Agent Installation
+    # ================================
+    - name: Download CloudWatch Agent (x86_64)
+      get_url:
+        url: "https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb"
+        dest: "/tmp/amazon-cloudwatch-agent.deb"
+        mode: '0644'
+      when: ansible_architecture == "x86_64" and ansible_os_family == "Debian"
+      tags: ["monitoring"]
+
+    - name: Install CloudWatch Agent (Ubuntu/Debian)
+      apt:
+        deb: "/tmp/amazon-cloudwatch-agent.deb"
+        state: present
+      when: ansible_os_family == "Debian"
+      tags: ["monitoring"]
+
+    - name: Download and install CloudWatch Agent (RedHat/CentOS)
+      yum:
+        name: "https://s3.amazonaws.com/amazoncloudwatch-agent/centos/amd64/latest/amazon-cloudwatch-agent.rpm"
+        state: present
+      when: ansible_os_family == "RedHat"
+      tags: ["monitoring"]
+
+    - name: Create CloudWatch Agent configuration
+      copy:
+        content: |
+          {
+            "agent": {
+              "metrics_collection_interval": 60,
+              "run_as_user": "cwagent"
+            },
+            "logs": {
+              "logs_collected": {
+                "files": {
+                  "collect_list": [
+                    {
+                      "file_path": "/var/log/{{ app_name }}/*.log",
+                      "log_group_name": "{{ app_name }}-logs",
+                      "log_stream_name": "{instance_id}",
+                      "retention_in_days": {{ log_retention_days }},
+                      "timezone": "UTC"
+                    },
+                    {
+                      "file_path": "/var/log/syslog",
+                      "log_group_name": "system-logs",
+                      "log_stream_name": "{instance_id}-syslog",
+                      "retention_in_days": 7
+                    }
+                  ]
+                }
+              }
+            },
+            "metrics": {
+              "namespace": "{{ app_name }}/EC2",
+              "metrics_collected": {
+                "cpu": {
+                  "measurement": [
+                    "cpu_usage_idle",
+                    "cpu_usage_iowait",
+                    "cpu_usage_system",
+                    "cpu_usage_user"
+                  ],
+                  "metrics_collection_interval": 60
+                },
+                "disk": {
+                  "measurement": [
+                    "used_percent"
+                  ],
+                  "metrics_collection_interval": 60,
+                  "resources": [
+                    "*"
+                  ]
+                },
+                "diskio": {
+                  "measurement": [
+                    "io_time",
+                    "read_bytes",
+                    "write_bytes",
+                    "reads",
+                    "writes"
+                  ],
+                  "metrics_collection_interval": 60,
+                  "resources": [
+                    "*"
+                  ]
+                },
+                "mem": {
+                  "measurement": [
+                    "mem_used_percent"
+                  ],
+                  "metrics_collection_interval": 60
+                },
+                "netstat": {
+                  "measurement": [
+                    "tcp_established",
+                    "tcp_time_wait"
+                  ],
+                  "metrics_collection_interval": 60
+                },
+                "swap": {
+                  "measurement": [
+                    "swap_used_percent"
+                  ],
+                  "metrics_collection_interval": 60
+                }
+              }
+            }
+          }
+        dest: "/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json"
+        mode: '0644'
+      tags: ["monitoring"]
+
+    # ================================
+    # Security Configuration
+    # ================================
+    - name: Configure SSH security
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        backup: yes
+      loop:
+        - { regexp: '^#?Port', line: 'Port {{ ssh_port }}' }
+        - { regexp: '^#?PermitRootLogin', line: 'PermitRootLogin no' }
+        - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication no' }
+        - { regexp: '^#?PubkeyAuthentication', line: 'PubkeyAuthentication yes' }
+        - { regexp: '^#?X11Forwarding', line: 'X11Forwarding no' }
+        - { regexp: '^#?MaxAuthTries', line: 'MaxAuthTries 3' }
+        - { regexp: '^#?ClientAliveInterval', line: 'ClientAliveInterval 300' }
+        - { regexp: '^#?ClientAliveCountMax', line: 'ClientAliveCountMax 2' }
+      notify: restart sshd
+      tags: ["security"]
+
+    - name: Configure fail2ban for SSH
+      copy:
+        content: |
+          [sshd]
+          enabled = true
+          port = {{ ssh_port }}
+          logpath = /var/log/auth.log
+          maxretry = 3
+          bantime = 3600
+          findtime = 600
+        dest: /etc/fail2ban/jail.local
+        mode: '0644'
+      notify: restart fail2ban
+      tags: ["security"]
+
+    - name: Configure firewall (UFW - Ubuntu/Debian)
+      ufw:
+        rule: "{{ item.rule }}"
+        port: "{{ item.port }}"
+        proto: "{{ item.proto | default('tcp') }}"
+      loop:
+        - { rule: allow, port: "{{ ssh_port }}" }
+        - { rule: allow, port: "{{ app_port }}" }
+        - { rule: allow, port: "80" }
+        - { rule: allow, port: "443" }
+      when: ansible_os_family == "Debian"
+      tags: ["security", "firewall"]
+
+    - name: Enable UFW firewall
+      ufw:
+        state: enabled
+        policy: deny
+      when: ansible_os_family == "Debian"
+      tags: ["security", "firewall"]
+
+    # ================================
+    # System Performance Tuning
+    # ================================
+    - name: Configure system limits
+      pam_limits:
+        domain: "{{ item.domain }}"
+        limit_type: "{{ item.type }}"
+        limit_item: "{{ item.item }}"
+        value: "{{ item.value }}"
+      loop:
+        - { domain: "{{ app_user }}", type: soft, item: nofile, value: "{{ max_open_files }}" }
+        - { domain: "{{ app_user }}", type: hard, item: nofile, value: "{{ max_open_files }}" }
+        - { domain: "{{ app_user }}", type: soft, item: nproc, value: 32768 }
+        - { domain: "{{ app_user }}", type: hard, item: nproc, value: 32768 }
+      tags: ["performance"]
+
+    - name: Configure kernel parameters
+      sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: yes
+      loop:
+        - { name: net.core.somaxconn, value: 65535 }
+        - { name: net.core.netdev_max_backlog, value: 5000 }
+        - { name: net.ipv4.tcp_keepalive_time, value: "{{ tcp_keepalive_time }}" }
+        - { name: net.ipv4.tcp_keepalive_intvl, value: 30 }
+        - { name: net.ipv4.tcp_keepalive_probes, value: 3 }
+        - { name: vm.swappiness, value: 10 }
+        - { name: vm.dirty_ratio, value: 15 }
+        - { name: vm.dirty_background_ratio, value: 5 }
+      tags: ["performance"]
+
+    # ================================
+    # Backend Service Configuration
+    # ================================
+    - name: Create backend systemd service
+      copy:
+        content: |
+          [Unit]
+          Description={{ app_name | title }} Backend Service
+          After=network.target
+          Wants=network.target
+
+          [Service]
+          Type=simple
+          User={{ app_user }}
+          Group={{ app_user }}
+          WorkingDirectory=/opt/{{ app_name }}/backend
+          EnvironmentFile=/opt/{{ app_name }}/config/application.env
+          ExecStart=/usr/bin/java $JAVA_OPTS -Dspring.profiles.active=$SPRING_PROFILES_ACTIVE -jar {{ app_jar_path }}
+          ExecStop=/bin/kill -TERM $MAINPID
+          Restart=always
+          RestartSec=10
+          StandardOutput=journal
+          StandardError=journal
+          SyslogIdentifier={{ app_name }}-backend
+          KillMode=mixed
+          KillSignal=SIGTERM
+          TimeoutStopSec=30
+
+          # Security settings
+          NoNewPrivileges=yes
+          PrivateTmp=yes
+          ProtectSystem=strict
+          ProtectHome=yes
+          ReadWritePaths=/opt/{{ app_name }} /var/log/{{ app_name }} /tmp
+
+          # Resource limits
+          LimitNOFILE={{ max_open_files }}
+          LimitNPROC=32768
+
+          # Environment
+          Environment=JAVA_HOME={{ java_home }}
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: "/etc/systemd/system/{{ app_name }}-backend.service"
+        mode: '0644'
+      tags: ["service", "backend"]
+
+    - name: Create frontend deployment script
+      copy:
+        content: |
+          #!/bin/bash
+          set -e
+          
+          echo "Deploying React frontend..."
+          
+          # Check if build directory exists and has content
+          if [ ! -d "{{ frontend_build_path }}" ] || [ -z "$(ls -A {{ frontend_build_path }})" ]; then
+              echo "Frontend build directory not found or empty"
+              echo "Creating placeholder index.html"
+              mkdir -p {{ frontend_build_path }}
+              cat > {{ frontend_build_path }}/index.html << 'HTML'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Java Microservice - Frontend Loading</title>
+              <style>
+                  body { font-family: Arial, sans-serif; margin: 40px; text-align: center; }
+                  .loading { color: #007bff; }
+                  .info { background: #f8f9fa; padding: 20px; margin: 20px 0; border-radius: 5px; }
+              </style>
+          </head>
+          <body>
+              <h1>Java Microservice Application</h1>
+              <div class="loading">
+                  <h2>Frontend is being prepared...</h2>
+                  <p>The React frontend will be available once the build is deployed.</p>
+              </div>
+              <div class="info">
+                  <h3>Available Endpoints:</h3>
+                  <ul style="text-align: left; display: inline-block;">
+                      <li><a href="/api/users">API - Users List</a></li>
+                      <li><a href="/actuator/health">Health Check</a></li>
+                      <li><a href="/actuator/info">Application Info</a></li>
+                  </ul>
+              </div>
+          </body>
+          </html>
+          HTML
+              chown -R {{ app_user }}:{{ app_user }} {{ frontend_build_path }}
+              echo "Placeholder frontend deployed"
+          else
+              echo "Frontend build found, setting permissions..."
+              chown -R {{ app_user }}:{{ app_user }} {{ frontend_build_path }}
+              echo "Frontend deployment completed"
+          fi
+          
+          # Test nginx configuration
+          nginx -t
+          if [ $? -eq 0 ]; then
+              echo "Nginx configuration is valid"
+              systemctl reload nginx
+              echo "Nginx reloaded successfully"
+          else
+              echo "Nginx configuration test failed"
+              exit 1
+          fi
+        dest: "/opt/{{ app_name }}/scripts/deploy-frontend.sh"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0755'
+      tags: ["service", "frontend"]
+
+    # ================================
+    # Logging Configuration
+    # ================================
+    - name: Configure logrotate for application logs
+      copy:
+        content: |
+          /var/log/{{ app_name }}/*.log {
+              daily
+              rotate {{ log_retention_days }}
+              compress
+              delaycompress
+              missingok
+              notifempty
+              create 644 {{ app_user }} {{ app_user }}
+              postrotate
+                  systemctl reload {{ app_name }} > /dev/null 2>&1 || true
+              endscript
+          }
+        dest: "/etc/logrotate.d/{{ app_name }}"
+        mode: '0644'
+      tags: ["logging"]
+
+    # ================================
+    # Backup and Maintenance Scripts
+    # ================================
+    - name: Create application backup script
+      copy:
+        content: |
+          #!/bin/bash
+          # {{ app_name | title }} Backup Script
+          
+          BACKUP_DIR="/opt/{{ app_name }}/backup"
+          DATE=$(date +%Y%m%d_%H%M%S)
+          BACKUP_FILE="${BACKUP_DIR}/{{ app_name }}-backup-${DATE}.tar.gz"
+          
+          # Create backup directory
+          mkdir -p "$BACKUP_DIR"
+          
+          # Stop application
+          systemctl stop {{ app_name }}
+          
+          # Create backup
+          tar -czf "$BACKUP_FILE" \
+              --exclude="/opt/{{ app_name }}/backup" \
+              --exclude="/opt/{{ app_name }}/logs" \
+              /opt/{{ app_name }} \
+              /var/log/{{ app_name }}
+          
+          # Start application
+          systemctl start {{ app_name }}
+          
+          # Keep only last 7 backups
+          find "$BACKUP_DIR" -name "{{ app_name }}-backup-*.tar.gz" -type f -mtime +7 -delete
+          
+          echo "Backup completed: $BACKUP_FILE"
+        dest: "/usr/local/bin/{{ app_name }}-backup.sh"
+        mode: '0755'
+      tags: ["backup"]
+
+    - name: Create system health check script
+      copy:
+        content: |
+          #!/bin/bash
+          # System Health Check Script
+          
+          echo "=== System Health Check Report ===" 
+          echo "Date: $(date)"
+          echo "Hostname: $(hostname)"
+          echo ""
+          
+          # Check disk usage
+          echo "Disk Usage:"
+          df -h | grep -E '^/dev/' | awk '{print $1 " " $5 " " $6}'
+          echo ""
+          
+          # Check memory usage
+          echo "Memory Usage:"
+          free -h | grep -E '^Mem:' | awk '{print "Used: " $3 "/" $2 " (" $3/$2*100 "%)"}'
+          echo ""
+          
+          # Check CPU load
+          echo "CPU Load Average:"
+          uptime | awk -F'load average:' '{print $2}'
+          echo ""
+          
+          # Check service status
+          echo "{{ app_name | title }} Service Status:"
+          systemctl is-active {{ app_name }} && echo "RUNNING" || echo "STOPPED"
+          echo ""
+          
+          # Check port connectivity
+          echo "Port {{ app_port }} Status:"
+          netstat -tlnp | grep :{{ app_port }} && echo "LISTENING" || echo "NOT LISTENING"
+          echo ""
+          
+          # Check logs for errors (last 10 minutes)
+          echo "Recent Errors in {{ app_name }} logs:"
+          journalctl -u {{ app_name }} --since "10 minutes ago" --grep "ERROR|WARN" || echo "No recent errors"
+        dest: "/usr/local/bin/health-check.sh"
+        mode: '0755'
+      tags: ["monitoring"]
+
+    # ================================
+    # Cron Jobs for Maintenance
+    # ================================
+    - name: Set up cron jobs for maintenance
+      cron:
+        name: "{{ item.name }}"
+        job: "{{ item.job }}"
+        minute: "{{ item.minute | default('0') }}"
+        hour: "{{ item.hour | default('2') }}"
+        day: "{{ item.day | default('*') }}"
+        user: root
+      loop:
+        - name: "Daily backup"
+          job: "/usr/local/bin/{{ app_name }}-backup.sh"
+          hour: "2"
+        - name: "Weekly health check report"
+          job: "/usr/local/bin/health-check.sh > /var/log/weekly-health-report.log"
+          day: "0"
+          hour: "6"
+        - name: "Clean old logs"
+          job: "/usr/sbin/logrotate /etc/logrotate.conf"
+          hour: "1"
+      tags: ["cron"]
+
+  # ================================
+  # Handlers
+  # ================================
+  handlers:
+    - name: restart nginx
+      systemd:
+        name: nginx
+        state: restarted
+
+    - name: restart backend
+      systemd:
+        name: "{{ app_name }}-backend"
+        state: restarted
+
+    - name: reload systemd
+      systemd:
+        daemon_reload: yes
+
+    - name: restart sshd
+      systemd:
+        name: sshd
+        state: restarted
+      tags: ["security"]
+
+    - name: restart fail2ban
+      systemd:
+        name: fail2ban
+        state: restarted
+        enabled: yes
+      tags: ["security"]
+
+    - name: restart cloudwatch-agent
+      systemd:
+        name: amazon-cloudwatch-agent
+        state: restarted
+        enabled: yes
+      tags: ["monitoring"]

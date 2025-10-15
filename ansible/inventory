@@ -1,0 +1,123 @@
+# Enhanced Ansible Inventory with Production Environment Configuration
+# This inventory supports multi-environment deployments and dynamic scaling
+
+[local]
+localhost ansible_connection=local
+
+# ====================================
+# PRODUCTION ENVIRONMENT
+# ====================================
+[production:children]
+web_servers
+app_servers
+database_servers
+load_balancers
+monitoring_servers
+
+[web_servers]
+web-01 ansible_host=10.0.1.10 ansible_user=ec2-user server_role=nginx
+web-02 ansible_host=10.0.1.11 ansible_user=ec2-user server_role=nginx
+web-03 ansible_host=10.0.1.12 ansible_user=ec2-user server_role=nginx
+
+[app_servers]
+app-01 ansible_host=10.0.2.10 ansible_user=ec2-user server_role=java_app
+app-02 ansible_host=10.0.2.11 ansible_user=ec2-user server_role=java_app
+app-03 ansible_host=10.0.2.12 ansible_user=ec2-user server_role=java_app
+
+[database_servers]
+db-01 ansible_host=10.0.3.10 ansible_user=ec2-user server_role=postgresql db_primary=true
+db-02 ansible_host=10.0.3.11 ansible_user=ec2-user server_role=postgresql db_replica=true
+
+[load_balancers]
+lb-01 ansible_host=10.0.1.20 ansible_user=ec2-user server_role=load_balancer
+
+[monitoring_servers]
+monitor-01 ansible_host=10.0.4.10 ansible_user=ec2-user server_role=prometheus
+monitor-02 ansible_host=10.0.4.11 ansible_user=ec2-user server_role=grafana
+
+# ====================================
+# STAGING ENVIRONMENT  
+# ====================================
+[staging:children]
+staging_web
+staging_app
+staging_db
+
+[staging_web]
+stage-web-01 ansible_host=10.1.1.10 ansible_user=ec2-user server_role=nginx
+
+[staging_app]
+stage-app-01 ansible_host=10.1.2.10 ansible_user=ec2-user server_role=java_app
+
+[staging_db]
+stage-db-01 ansible_host=10.1.3.10 ansible_user=ec2-user server_role=postgresql
+
+# ====================================
+# DEVELOPMENT ENVIRONMENT
+# ====================================
+[development]
+dev-all-in-one ansible_host=10.2.1.10 ansible_user=ec2-user server_role=development
+
+# ====================================
+# KUBERNETES CLUSTERS
+# ====================================
+[k8s_masters]
+k8s-master-01 ansible_host=10.0.5.10 ansible_user=ec2-user server_role=k8s_master
+k8s-master-02 ansible_host=10.0.5.11 ansible_user=ec2-user server_role=k8s_master
+k8s-master-03 ansible_host=10.0.5.12 ansible_user=ec2-user server_role=k8s_master
+
+[k8s_workers]
+k8s-worker-01 ansible_host=10.0.6.10 ansible_user=ec2-user server_role=k8s_worker
+k8s-worker-02 ansible_host=10.0.6.11 ansible_user=ec2-user server_role=k8s_worker
+k8s-worker-03 ansible_host=10.0.6.12 ansible_user=ec2-user server_role=k8s_worker
+k8s-worker-04 ansible_host=10.0.6.13 ansible_user=ec2-user server_role=k8s_worker
+
+[k8s_cluster:children]
+k8s_masters
+k8s_workers
+
+# ====================================
+# CI/CD INFRASTRUCTURE
+# ====================================
+[cicd]
+jenkins-master ansible_host=10.0.7.10 ansible_user=ec2-user server_role=jenkins_master
+jenkins-agent-01 ansible_host=10.0.7.11 ansible_user=ec2-user server_role=jenkins_agent
+jenkins-agent-02 ansible_host=10.0.7.12 ansible_user=ec2-user server_role=jenkins_agent
+sonarqube ansible_host=10.0.7.20 ansible_user=ec2-user server_role=sonarqube
+nexus ansible_host=10.0.7.21 ansible_user=ec2-user server_role=nexus
+
+[aws_instances]
+# This will be populated dynamically or manually with actual EC2 instances
+# Example:
+# 10.0.11.10 ansible_user=ec2-user ansible_ssh_private_key_file=~/.ssh/your-key.pem
+# 10.0.11.11 ansible_user=ec2-user ansible_ssh_private_key_file=~/.ssh/your-key.pem
+
+# ====================================
+# GROUP VARIABLES
+# ====================================
+
+# Production Environment Variables
+[production:vars]
+environment=production
+backup_enabled=true
+monitoring_enabled=true
+ssl_enabled=true
+log_level=INFO
+app_memory_limit=2g
+app_cpu_limit=2
+
+# Application Server Variables
+[app_servers:vars]
+java_version=17
+app_port=8080
+app_name=java-microservice
+spring_profiles_active=production
+jvm_xms=512m
+jvm_xmx=1024m
+
+# Global Variables
+[all:vars]
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+ansible_become=true
+ansible_become_method=sudo
+aws_region=us-east-1

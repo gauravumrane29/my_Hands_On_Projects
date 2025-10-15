@@ -1,0 +1,202 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: java-microservice-dev
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: java-microservice
+    app.kubernetes.io/instance: java-microservice-dev
+    app.kubernetes.io/component: argocd-application
+    environment: development
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  
+  source:
+    repoURL: https://github.com/your-org/devops-project.git
+    targetRevision: main
+    path: deployment/helm/java-microservice
+    helm:
+      releaseName: java-microservice-dev
+      valueFiles:
+        - values.yaml
+        - values-dev.yaml
+      parameters:
+        - name: image.tag
+          value: "dev-latest"
+        - name: deployment.replicaCount
+          value: "1"
+        - name: resources.requests.cpu
+          value: "100m"
+        - name: resources.requests.memory
+          value: "256Mi"
+        - name: hpa.minReplicas
+          value: "1"
+        - name: hpa.maxReplicas
+          value: "3"
+        - name: ingress.hosts[0].host
+          value: "java-microservice-dev.example.com"
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: development
+  
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  
+  revisionHistoryLimit: 10
+  
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+    - group: ""
+      kind: Secret
+      name: java-microservice-tls
+      jsonPointers:
+        - /data
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: java-microservice-staging
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: java-microservice
+    app.kubernetes.io/instance: java-microservice-staging
+    app.kubernetes.io/component: argocd-application
+    environment: staging
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  
+  source:
+    repoURL: https://github.com/your-org/devops-project.git
+    targetRevision: main
+    path: deployment/helm/java-microservice
+    helm:
+      releaseName: java-microservice-staging
+      valueFiles:
+        - values.yaml
+        - values-staging.yaml
+      parameters:
+        - name: image.tag
+          value: "staging-latest"
+        - name: deployment.replicaCount
+          value: "2"
+        - name: resources.requests.cpu
+          value: "250m"
+        - name: resources.requests.memory
+          value: "512Mi"
+        - name: hpa.minReplicas
+          value: "2"
+        - name: hpa.maxReplicas
+          value: "5"
+        - name: ingress.hosts[0].host
+          value: "java-microservice-staging.example.com"
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: staging
+  
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  
+  revisionHistoryLimit: 10
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: java-microservice-prod
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: java-microservice
+    app.kubernetes.io/instance: java-microservice-prod
+    app.kubernetes.io/component: argocd-application
+    environment: production
+  annotations:
+    argocd.argoproj.io/sync-options: "ApprovalRequired=true"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: production
+  
+  source:
+    repoURL: https://github.com/your-org/devops-project.git
+    targetRevision: main
+    path: deployment/helm/java-microservice
+    helm:
+      releaseName: java-microservice-prod
+      valueFiles:
+        - values.yaml
+        - values-prod.yaml
+      parameters:
+        - name: image.tag
+          value: "prod-latest"
+        - name: deployment.replicaCount
+          value: "3"
+        - name: resources.requests.cpu
+          value: "500m"
+        - name: resources.requests.memory
+          value: "1Gi"
+        - name: hpa.minReplicas
+          value: "3"
+        - name: hpa.maxReplicas
+          value: "10"
+        - name: ingress.hosts[0].host
+          value: "java-microservice.example.com"
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: production
+  
+  syncPolicy:
+    # Manual sync for production
+    automated: null
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - ApplyOutOfSyncOnly=true
+      - RespectIgnoreDifferences=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m
+  
+  revisionHistoryLimit: 20

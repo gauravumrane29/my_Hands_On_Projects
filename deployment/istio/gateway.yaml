@@ -1,0 +1,169 @@
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: java-microservice-gateway
+  namespace: istio-system
+  labels:
+    app.kubernetes.io/name: java-microservice-gateway
+    app.kubernetes.io/component: istio-gateway
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  # HTTP (redirect to HTTPS)
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "java-microservice.example.com"
+    - "java-microservice-dev.example.com"
+    - "java-microservice-staging.example.com"
+    tls:
+      httpsRedirect: true
+  # HTTPS
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    hosts:
+    - "java-microservice.example.com"
+    - "java-microservice-dev.example.com"
+    - "java-microservice-staging.example.com"
+    tls:
+      mode: SIMPLE
+      credentialName: java-microservice-tls
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: java-microservice-vs
+  namespace: production
+  labels:
+    app.kubernetes.io/name: java-microservice-vs
+    app.kubernetes.io/component: istio-virtualservice
+    environment: production
+spec:
+  hosts:
+  - "java-microservice.example.com"
+  gateways:
+  - istio-system/java-microservice-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /actuator/health
+    route:
+    - destination:
+        host: java-microservice.production.svc.cluster.local
+        port:
+          number: 80
+    timeout: 10s
+    retries:
+      attempts: 3
+      perTryTimeout: 3s
+      retryOn: 5xx,gateway-error,connect-failure,refused-stream
+  - match:
+    - uri:
+        prefix: /actuator
+    route:
+    - destination:
+        host: java-microservice.production.svc.cluster.local
+        port:
+          number: 80
+    headers:
+      request:
+        add:
+          X-Service-Environment: "production"
+    timeout: 30s
+  - match:
+    - uri:
+        prefix: /
+    route:
+    - destination:
+        host: java-microservice.production.svc.cluster.local
+        port:
+          number: 80
+        subset: v1
+      weight: 100
+    fault:
+      delay:
+        percentage:
+          value: 0.1
+        fixedDelay: 5s
+    headers:
+      request:
+        add:
+          X-Service-Environment: "production"
+          X-Request-ID: "%REQ(X-REQUEST-ID)%"
+      response:
+        add:
+          X-Service-Version: "v1.0.0"
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,gateway-error,connect-failure,refused-stream
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: java-microservice-vs-staging
+  namespace: staging
+  labels:
+    app.kubernetes.io/name: java-microservice-vs-staging
+    app.kubernetes.io/component: istio-virtualservice
+    environment: staging
+spec:
+  hosts:
+  - "java-microservice-staging.example.com"
+  gateways:
+  - istio-system/java-microservice-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /
+    route:
+    - destination:
+        host: java-microservice.staging.svc.cluster.local
+        port:
+          number: 80
+    headers:
+      request:
+        add:
+          X-Service-Environment: "staging"
+    timeout: 30s
+    retries:
+      attempts: 2
+      perTryTimeout: 10s
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: java-microservice-vs-dev
+  namespace: development
+  labels:
+    app.kubernetes.io/name: java-microservice-vs-dev
+    app.kubernetes.io/component: istio-virtualservice
+    environment: development
+spec:
+  hosts:
+  - "java-microservice-dev.example.com"
+  gateways:
+  - istio-system/java-microservice-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /
+    route:
+    - destination:
+        host: java-microservice.development.svc.cluster.local
+        port:
+          number: 80
+    headers:
+      request:
+        add:
+          X-Service-Environment: "development"
+    timeout: 60s

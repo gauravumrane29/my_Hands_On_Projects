@@ -1,0 +1,519 @@
+# Jenkins Pipeline Configuration
+# Configuration as Code (JCasC) for Jenkins setup
+
+jenkins:
+  systemMessage: "DevOps CI/CD Pipeline - Managed by Configuration as Code"
+  numExecutors: 4
+  scmCheckoutRetryCount: 3
+  mode: NORMAL
+  labelString: "master built-in"
+  quietPeriod: 5
+  
+  # Security Configuration
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "admin"
+          password: "${JENKINS_ADMIN_PASSWORD}"
+          properties:
+            - "hudson.tasks.Mailer$UserProperty":
+                emailAddress: "admin@company.com"
+            - "hudson.model.PaneStatusProperties":
+                collapsed: false
+        - id: "developer"
+          password: "${JENKINS_DEVELOPER_PASSWORD}"
+          properties:
+            - "hudson.tasks.Mailer$UserProperty":
+                emailAddress: "developer@company.com"
+  
+  authorizationStrategy:
+    globalMatrix:
+      permissions:
+        - "Overall/Administer:admin"
+        - "Overall/Read:authenticated"
+        - "Job/Build:authenticated"
+        - "Job/Cancel:authenticated"
+        - "Job/Read:authenticated"
+        - "Job/Workspace:authenticated"
+        - "Run/Replay:authenticated"
+        - "Run/Update:authenticated"
+        - "View/Read:authenticated"
+        - "SCM/Tag:authenticated"
+        - "Agent/Build:authenticated"
+        - "Agent/Configure:admin"
+        - "Agent/Connect:admin"
+        - "Agent/Create:admin"
+        - "Agent/Delete:admin"
+        - "Agent/Disconnect:admin"
+        - "Credentials/Create:admin"
+        - "Credentials/Delete:admin"
+        - "Credentials/ManageDomains:admin"
+        - "Credentials/Update:admin"
+        - "Credentials/View:admin"
+  
+  # Agent Protocol Configuration  
+  agentProtocols:
+    - "JNLP4-connect"
+    - "Ping"
+  
+  # Remote FS root
+  remoteFSRoot: "/var/jenkins_home"
+  
+  # Security settings
+  disableRememberMe: false
+  
+  # Markup formatter
+  markupFormatter: 
+    rawHtml:
+      disableSyntaxHighlighting: false
+
+# Security Configuration
+security:
+  queueItemAuthenticator:
+    authenticators:
+      - global:
+          strategy: triggeringUsersAuthorizationStrategy
+  
+  sSHD:
+    port: -1
+
+# Nodes Configuration
+nodes:
+  - permanent:
+      name: "maven-java17-agent"
+      remoteFS: "/home/jenkins"
+      labelString: "maven java17 build linux"
+      mode: NORMAL
+      numExecutors: 2
+      retentionStrategy: "always"
+      launcher:
+        ssh:
+          host: "build-agent-1"
+          port: 22
+          credentialsId: "jenkins-ssh-key"
+          launchTimeoutSeconds: 60
+          maxNumRetries: 3
+          retryWaitTime: 15
+          sshHostKeyVerificationStrategy:
+            manuallyTrustedKeyVerificationStrategy:
+              requireInitialManualTrust: false
+  
+  - permanent:
+      name: "docker-agent"
+      remoteFS: "/home/jenkins"
+      labelString: "docker container build linux"
+      mode: NORMAL
+      numExecutors: 2
+      retentionStrategy: "always"
+      launcher:
+        ssh:
+          host: "docker-agent-1"
+          port: 22
+          credentialsId: "jenkins-ssh-key"
+          launchTimeoutSeconds: 60
+          maxNumRetries: 3
+          retryWaitTime: 15
+
+# Tool Configuration
+tool:
+  # Git Configuration
+  git:
+    installations:
+      - name: "Default"
+        home: "/usr/bin/git"
+  
+  # Maven Configuration
+  maven:
+    installations:
+      - name: "Maven-3.8.6"
+        properties:
+          - installSource:
+              installers:
+                - maven:
+                    id: "3.8.6"
+      - name: "Maven-3.9.4"
+        properties:
+          - installSource:
+              installers:
+                - maven:
+                    id: "3.9.4"
+  
+  # JDK Configuration
+  jdk:
+    installations:
+      - name: "OpenJDK-11"
+        home: "/usr/lib/jvm/java-11-openjdk-amd64"
+      - name: "OpenJDK-17"
+        home: "/usr/lib/jvm/java-17-openjdk-amd64"
+      - name: "OpenJDK-21"
+        properties:
+          - installSource:
+              installers:
+                - jdkInstaller:
+                    id: "jdk-21.0.1+12"
+                    acceptLicense: true
+  
+  # Docker Configuration
+  dockerTool:
+    installations:
+      - name: "Docker"
+        home: "/usr/bin/docker"
+  
+  # NodeJS Configuration
+  nodejs:
+    installations:
+      - name: "NodeJS-18"
+        properties:
+          - installSource:
+              installers:
+                - nodeJSInstaller:
+                    id: "18.17.0"
+                    npmPackagesRefreshHours: 72
+      - name: "NodeJS-20"
+        properties:
+          - installSource:
+              installers:
+                - nodeJSInstaller:
+                    id: "20.5.1"
+                    npmPackagesRefreshHours: 72
+
+# Credentials Configuration
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          # SSH Key for build agents
+          - basicSSHUserPrivateKey:
+              scope: GLOBAL
+              id: "jenkins-ssh-key"
+              username: "jenkins"
+              passphrase: "${SSH_KEY_PASSPHRASE}"
+              description: "SSH key for Jenkins build agents"
+              privateKeySource:
+                directEntry:
+                  privateKey: "${SSH_PRIVATE_KEY}"
+          
+          # GitHub Personal Access Token
+          - string:
+              scope: GLOBAL
+              id: "github-token"
+              secret: "${GITHUB_TOKEN}"
+              description: "GitHub Personal Access Token"
+          
+          # Docker Registry Credentials
+          - usernamePassword:
+              scope: GLOBAL
+              id: "docker-registry"
+              username: "${DOCKER_REGISTRY_USERNAME}"
+              password: "${DOCKER_REGISTRY_PASSWORD}"
+              description: "Docker Registry Credentials"
+          
+          # Container Registry (GitHub)
+          - usernamePassword:
+              scope: GLOBAL
+              id: "github-container-registry"
+              username: "${GITHUB_USERNAME}"
+              password: "${GITHUB_TOKEN}"
+              description: "GitHub Container Registry"
+          
+          # AWS Credentials
+          - aws:
+              scope: GLOBAL
+              id: "aws-credentials"
+              accessKey: "${AWS_ACCESS_KEY_ID}"
+              secretKey: "${AWS_SECRET_ACCESS_KEY}"
+              description: "AWS Credentials for deployment"
+          
+          # Kubernetes Config Files
+          - kubeconfigFile:
+              scope: GLOBAL
+              id: "k8s-development"
+              description: "Kubernetes config for development"
+              content: "${K8S_DEV_CONFIG}"
+          
+          - kubeconfigFile:
+              scope: GLOBAL
+              id: "k8s-staging"
+              description: "Kubernetes config for staging"
+              content: "${K8S_STAGING_CONFIG}"
+          
+          - kubeconfigFile:
+              scope: GLOBAL
+              id: "k8s-production"
+              description: "Kubernetes config for production"
+              content: "${K8S_PROD_CONFIG}"
+          
+          # SonarQube Token
+          - string:
+              scope: GLOBAL
+              id: "sonarqube-token"
+              secret: "${SONARQUBE_TOKEN}"
+              description: "SonarQube Authentication Token"
+          
+          # Slack Token
+          - string:
+              scope: GLOBAL
+              id: "slack-token"
+              secret: "${SLACK_TOKEN}"
+              description: "Slack Bot Token for notifications"
+          
+          # Database Credentials
+          - usernamePassword:
+              scope: GLOBAL
+              id: "database-credentials"
+              username: "${DB_USERNAME}"
+              password: "${DB_PASSWORD}"
+              description: "Database credentials for applications"
+          
+          # JIRA API Token
+          - string:
+              scope: GLOBAL
+              id: "jira-token"
+              secret: "${JIRA_TOKEN}"
+              description: "JIRA API Token"
+
+# Unclassified Configuration
+unclassified:
+  # Location Configuration
+  location:
+    url: "${JENKINS_URL}"
+    adminAddress: "admin@company.com"
+  
+  # Global Pipeline Libraries
+  globalLibraries:
+    libraries:
+      - name: "jenkins-shared-library"
+        defaultVersion: "main"
+        implicit: true
+        allowVersionOverride: true
+        includeInChangesets: true
+        retriever:
+          modernSCM:
+            scm:
+              git:
+                remote: "https://github.com/your-org/jenkins-shared-library.git"
+                credentialsId: "github-token"
+  
+  # SonarQube Configuration
+  sonarGlobalConfiguration:
+    installations:
+      - name: "SonarQube"
+        serverUrl: "${SONARQUBE_URL}"
+        credentialsId: "sonarqube-token"
+        mojoVersion: ""
+        additionalProperties: ""
+        additionalAnalysisProperties: ""
+        triggers:
+          skipScmCause: false
+          skipUpstreamCause: false
+        sonarRunnerInstallation: ""
+  
+  # Email Configuration
+  mailer:
+    defaultSuffix: "@company.com"
+    smtpHost: "${SMTP_HOST}"
+    smtpPort: "${SMTP_PORT}"
+    useSsl: true
+    charset: "UTF-8"
+    authentication:
+      username: "${SMTP_USERNAME}"
+      password: "${SMTP_PASSWORD}"
+  
+  # Extended Email Configuration
+  extendedEmailPublisher:
+    defaultContentType: "text/html"
+    defaultSubject: "$PROJECT_NAME - Build # $BUILD_NUMBER - $BUILD_STATUS!"
+    defaultBody: |
+      <h2>Build Information</h2>
+      <ul>
+        <li><strong>Project:</strong> $PROJECT_NAME</li>
+        <li><strong>Build Number:</strong> $BUILD_NUMBER</li>
+        <li><strong>Status:</strong> $BUILD_STATUS</li>
+        <li><strong>Date:</strong> $BUILD_TIMESTAMP</li>
+        <li><strong>Duration:</strong> $BUILD_DURATION</li>
+      </ul>
+      
+      <h2>Changes</h2>
+      $CHANGES
+      
+      <h2>Console Output</h2>
+      <pre>$BUILD_LOG</pre>
+      
+      <p>Check console output at <a href="$BUILD_URL">$BUILD_URL</a></p>
+    maxAttachmentSize: 10485760
+    recipientList: "admin@company.com"
+    precedenceBulk: false
+    debugMode: false
+  
+  # Slack Configuration
+  slackNotifier:
+    teamDomain: "${SLACK_TEAM_DOMAIN}"
+    token: "${SLACK_TOKEN}"
+    botUser: true
+    room: "#devops"
+    sendAsText: false
+    commitInfoChoice: "AUTHORS_AND_TITLES"
+    includeTestSummary: true
+    includeFailedTests: false
+    showCommitList: true
+    includeCustomMessage: false
+  
+  # JIRA Configuration  
+  jiraGlobalConfiguration:
+    sites:
+      - name: "Company JIRA"
+        url: "${JIRA_URL}"
+        credentialsId: "jira-token"
+        supportsWikiStyleComment: true
+        recordScmChanges: true
+        userPattern: ""
+        updateJiraIssueForAllStatus: false
+        groupVisibility: ""
+        roleVisibility: ""
+  
+  # Timestamper Configuration
+  timestamper:
+    allPipelines: true
+    elapsedTimeFormat: "'<b>'HH:mm:ss.S'</b> '"
+    systemTimeFormat: "'<b>'HH:mm:ss'</b> '"
+  
+  # Build Discarder Configuration
+  buildDiscarders:
+    configuredBuildDiscarders:
+      - "hudson.tasks.LogRotator":
+          artifactDaysToKeep: 30
+          artifactNumToKeep: 50
+          daysToKeep: 90
+          numToKeep: 100
+  
+  # Workspace Cleanup Configuration
+  wsCleanup:
+    deleteDirs: true
+    cleanupMatrixParent: false
+    externalDelete: ""
+    disableDeferredWipeout: false
+  
+  # Build Name Setter Configuration  
+  buildNameSetter:
+    fileNamePattern: ""
+    nameTemplate: "#${BUILD_NUMBER} - ${GIT_BRANCH}"
+    descriptionTemplate: "Built from ${GIT_COMMIT}"
+  
+  # GitHub Configuration
+  githubpullrequest:
+    publishedURL: "${JENKINS_URL}"
+    cron: "H/5 * * * *"
+    useComments: true
+    useDetailedComments: false
+    manageWebhooks: true
+    unstableAs: "SUCCESS"
+    cancelQueued: false
+    abortRunning: false
+    skipFirstRun: false
+    displayBuildErrorsOnDownstreamBuilds: false
+    whitelistTargetBranches:
+      - main
+      - develop
+      - master
+    adminlist:
+      - admin
+    whitelist:
+      - developer
+    orgslist: ""
+    cron_check: "H/5 * * * *"
+  
+  # Docker Configuration
+  docker-plugin:
+    dockerHostURI: "unix:///var/run/docker.sock"
+    connectTimeout: 60
+    readTimeout: 60
+    version: ""
+    credentialsId: ""
+  
+  # Performance Plugin Configuration
+  performancePublisher:
+    sourceDataFiles: "target/jmeter/results/*.jtl"
+    modeOfThreshold: false
+    configType: "ART"
+    errorFailedThreshold: 5
+    errorUnstableThreshold: 10
+    errorUnstableResponseTimeThreshold: ""
+    relativeFailedThresholdPositive: 0.0
+    relativeFailedThresholdNegative: 0.0
+    relativeUnstableThresholdPositive: 0.0
+    relativeUnstableThresholdNegative: 0.0
+    nthBuildNumber: 0
+    modePerformancePerTestCase: true
+    compareBuildPrevious: true
+    modeThroughput: false
+    failBuildIfNoResultFile: false
+    excludeResponseTime: false
+    ignoreFailedBuilds: false
+    ignoreUnstableBuilds: false
+    persistConstraintLog: false
+    modeEvaluation: false
+
+# Job DSL Seed Job (Jobs will be created via Job DSL)
+jobs:
+  - script: |
+      job('seed-job') {
+          description('Job DSL seed job to create other jobs')
+          scm {
+              git('https://github.com/your-org/jenkins-jobs.git', 'main') {
+                  node -> node / 'extensions' / 'hudson.plugins.git.extensions.impl.CleanBeforeCheckout'
+              }
+          }
+          triggers {
+              scm('H/15 * * * *')
+          }
+          steps {
+              dsl {
+                  external('jobs/**/*.groovy')
+                  removeAction('DELETE')
+                  removeViewAction('DELETE')
+                  ignoreExisting(false)
+                  additionalClasspath('lib/*.jar')
+              }
+          }
+      }
+
+# Views Configuration  
+views:
+  - all:
+      name: "All Jobs"
+      description: "All jobs in the system"
+      
+  - listView:
+      name: "Pipeline Jobs"
+      description: "All pipeline jobs"
+      filterQueue: false
+      filterExecutors: false
+      jobs:
+        - "java-microservice"
+        - "infrastructure-deployment"
+        - "security-scan-pipeline"
+      columns:
+        - "status"
+        - "weather"
+        - "name"
+        - "lastSuccess"
+        - "lastFailure"
+        - "lastDuration"
+        - "buildButton"
+      
+  - listView:
+      name: "Failed Jobs"
+      description: "Jobs that have failed recently"
+      filterQueue: false
+      filterExecutors: false
+      statusFilter: false
+      includePattern: ".*"
+      columns:
+        - "status"
+        - "weather"
+        - "name"
+        - "lastSuccess"
+        - "lastFailure"
+        - "lastDuration"
+        - "buildButton"

@@ -1,0 +1,223 @@
+groups:
+  - name: java-microservice-backend-alerts
+    rules:
+      - alert: BackendServiceDown
+        expr: up{job=~".*backend.*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: backend
+        annotations:
+          summary: "Backend service is down"
+          description: "Backend service {{ $labels.kubernetes_pod_name }} in namespace {{ $labels.kubernetes_namespace }} has been down for more than 2 minutes."
+          runbook_url: "https://wiki.company.com/runbooks/backend-service-down"
+
+      - alert: BackendHighErrorRate
+        expr: (sum(rate(http_server_requests_total{job=~".*backend.*", status=~"4..|5.."}[5m])) by (kubernetes_namespace) / sum(rate(http_server_requests_total{job=~".*backend.*"}[5m])) by (kubernetes_namespace)) * 100 > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: backend
+        annotations:
+          summary: "High error rate in backend service"
+          description: "Backend error rate is {{ $value }}% in namespace {{ $labels.kubernetes_namespace }}"
+
+      - alert: BackendHighResponseTime
+        expr: histogram_quantile(0.95, sum(rate(http_server_requests_duration_seconds_bucket{job=~".*backend.*"}[5m])) by (le, kubernetes_namespace)) > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: backend
+        annotations:
+          summary: "High response time in backend service"
+          description: "Backend 95th percentile response time is {{ $value }}s in namespace {{ $labels.kubernetes_namespace }}"
+
+      - alert: BackendJVMMemoryHigh
+        expr: (jvm_memory_used_bytes{job=~".*backend.*", area="heap"} / jvm_memory_max_bytes{job=~".*backend.*", area="heap"}) * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+          service: backend
+        annotations:
+          summary: "High JVM memory usage"
+          description: "JVM heap memory usage is {{ $value }}% on {{ $labels.kubernetes_pod_name }}"
+
+      - alert: BackendJVMMemoryCritical
+        expr: (jvm_memory_used_bytes{job=~".*backend.*", area="heap"} / jvm_memory_max_bytes{job=~".*backend.*", area="heap"}) * 100 > 95
+        for: 5m
+        labels:
+          severity: critical
+          service: backend
+        annotations:
+          summary: "Critical JVM memory usage"
+          description: "JVM heap memory usage is {{ $value }}% on {{ $labels.kubernetes_pod_name }}"
+
+  - name: java-microservice-frontend-alerts
+    rules:
+      - alert: FrontendServiceDown
+        expr: up{job=~".*frontend.*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: frontend
+        annotations:
+          summary: "Frontend service is down"
+          description: "Frontend service {{ $labels.kubernetes_pod_name }} in namespace {{ $labels.kubernetes_namespace }} has been down for more than 2 minutes."
+
+      - alert: FrontendHighErrorRate
+        expr: (sum(rate(nginx_http_requests_total{job=~".*frontend.*", status=~"4..|5.."}[5m])) by (kubernetes_namespace) / sum(rate(nginx_http_requests_total{job=~".*frontend.*"}[5m])) by (kubernetes_namespace)) * 100 > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: frontend
+        annotations:
+          summary: "High error rate in frontend service"
+          description: "Frontend error rate is {{ $value }}% in namespace {{ $labels.kubernetes_namespace }}"
+
+      - alert: FrontendHighResponseTime
+        expr: rate(nginx_http_request_duration_seconds_sum{job=~".*frontend.*"}[5m]) / rate(nginx_http_request_duration_seconds_count{job=~".*frontend.*"}[5m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+          service: frontend
+        annotations:
+          summary: "High response time in frontend service"
+          description: "Frontend average response time is {{ $value }}s in namespace {{ $labels.kubernetes_namespace }}"
+
+  - name: java-microservice-database-alerts
+    rules:
+      - alert: PostgreSQLDown
+        expr: up{job=~".*postgresql.*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: database
+        annotations:
+          summary: "PostgreSQL database is down"
+          description: "PostgreSQL database in namespace {{ $labels.kubernetes_namespace }} has been down for more than 2 minutes."
+
+      - alert: PostgreSQLHighConnections
+        expr: (pg_stat_database_numbackends{job=~".*postgresql.*"} / pg_settings_max_connections{job=~".*postgresql.*"}) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: database
+        annotations:
+          summary: "High PostgreSQL connection usage"
+          description: "PostgreSQL connection usage is {{ $value }}% for database {{ $labels.datname }}"
+
+      - alert: PostgreSQLReplicationLag
+        expr: pg_replication_lag{job=~".*postgresql.*"} > 60
+        for: 5m
+        labels:
+          severity: warning
+          service: database
+        annotations:
+          summary: "PostgreSQL replication lag is high"
+          description: "PostgreSQL replication lag is {{ $value }}s on {{ $labels.instance }}"
+
+      - alert: PostgreSQLLongRunningQuery
+        expr: pg_stat_activity_max_tx_duration{job=~".*postgresql.*"} > 300
+        for: 5m
+        labels:
+          severity: warning
+          service: database
+        annotations:
+          summary: "Long running PostgreSQL query detected"
+          description: "PostgreSQL query running for {{ $value }}s on database {{ $labels.datname }}"
+
+  - name: java-microservice-redis-alerts
+    rules:
+      - alert: RedisDown
+        expr: up{job=~".*redis.*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: cache
+        annotations:
+          summary: "Redis cache is down"
+          description: "Redis cache in namespace {{ $labels.kubernetes_namespace }} has been down for more than 2 minutes."
+
+      - alert: RedisHighMemoryUsage
+        expr: (redis_memory_used_bytes{job=~".*redis.*"} / redis_memory_max_bytes{job=~".*redis.*"}) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          service: cache
+        annotations:
+          summary: "High Redis memory usage"
+          description: "Redis memory usage is {{ $value }}% on {{ $labels.instance }}"
+
+      - alert: RedisConnectionsHigh
+        expr: redis_connected_clients{job=~".*redis.*"} > 100
+        for: 5m
+        labels:
+          severity: warning
+          service: cache
+        annotations:
+          summary: "High number of Redis connections"
+          description: "Redis has {{ $value }} connected clients on {{ $labels.instance }}"
+
+      - alert: RedisSlowlog
+        expr: redis_slowlog_length{job=~".*redis.*"} > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: cache
+        annotations:
+          summary: "Redis slowlog is growing"
+          description: "Redis slowlog has {{ $value }} entries on {{ $labels.instance }}"
+
+  - name: java-microservice-business-alerts
+    rules:
+      - alert: LowUserRegistrationRate
+        expr: rate(http_server_requests_total{job=~".*backend.*", uri="/api/users", method="POST", status="201"}[1h]) < 0.01
+        for: 10m
+        labels:
+          severity: info
+          service: business
+        annotations:
+          summary: "Low user registration rate"
+          description: "User registration rate is {{ $value }} per second over the last hour"
+
+      - alert: HighUserAPIUsage
+        expr: rate(http_server_requests_total{job=~".*backend.*", uri=~"/api/users.*"}[5m]) > 50
+        for: 5m
+        labels:
+          severity: info
+          service: business
+        annotations:
+          summary: "High user API usage"
+          description: "User API requests are {{ $value }} per second"
+
+  - name: java-microservice-infrastructure-alerts
+    rules:
+      - alert: KubernetesDeploymentReplicasMismatch
+        expr: kube_deployment_status_replicas_available != kube_deployment_spec_replicas
+        for: 5m
+        labels:
+          severity: warning
+          service: infrastructure
+        annotations:
+          summary: "Kubernetes deployment replicas mismatch"
+          description: "Deployment {{ $labels.deployment }} in namespace {{ $labels.namespace }} has {{ $labels.kube_deployment_status_replicas_available }} available replicas, expected {{ $labels.kube_deployment_spec_replicas }}"
+
+      - alert: KubernetesPodCrashLooping
+        expr: rate(kube_pod_container_status_restarts_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: infrastructure
+        annotations:
+          summary: "Kubernetes pod is crash looping"
+          description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} is restarting frequently"
+
+      - alert: KubernetesNodeNotReady
+        expr: kube_node_status_condition{condition="Ready", status="true"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: infrastructure
+        annotations:
+          summary: "Kubernetes node is not ready"
+          description: "Node {{ $labels.node }} has been not ready for more than 5 minutes"

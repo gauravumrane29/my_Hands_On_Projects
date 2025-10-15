@@ -1,0 +1,254 @@
+apiVersion: 1
+groups:
+  - name: JavaMicroserviceAlerts
+    interval: 30s
+    rules:
+      # High-Priority Critical Alerts
+      - alert: ServiceDown
+        expr: up{job=~"java-microservice.*"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: devops
+          service: java-microservice
+        annotations:
+          summary: "Java microservice is down"
+          description: "Java microservice in namespace {{ $labels.kubernetes_namespace }} has been down for more than 1 minute."
+          runbook_url: "https://wiki.company.com/runbooks/java-microservice-down"
+          dashboard_url: "https://grafana.company.com/d/java-microservice"
+
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(http_server_requests_total{job=~"java-microservice.*", status=~"4..|5.."}[5m])) / 
+            sum(rate(http_server_requests_total{job=~"java-microservice.*"}[5m]))
+          ) * 100 > 5
+        for: 2m
+        labels:
+          severity: critical
+          team: devops
+          service: java-microservice
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }}% for java-microservice in {{ $labels.kubernetes_namespace }}."
+          runbook_url: "https://wiki.company.com/runbooks/high-error-rate"
+
+      - alert: HighResponseTime
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(http_server_requests_seconds_bucket{job=~"java-microservice.*"}[5m])) by (le)
+          ) > 1
+        for: 3m
+        labels:
+          severity: critical
+          team: devops
+          service: java-microservice
+        annotations:
+          summary: "High response time detected"
+          description: "95th percentile response time is {{ $value }}s for java-microservice."
+          runbook_url: "https://wiki.company.com/runbooks/high-response-time"
+
+      - alert: MemoryUsageHigh
+        expr: |
+          (jvm_memory_used_bytes{job=~"java-microservice.*", area="heap"} / 
+           jvm_memory_max_bytes{job=~"java-microservice.*", area="heap"}) * 100 > 85
+        for: 2m
+        labels:
+          severity: critical
+          team: devops
+          service: java-microservice
+        annotations:
+          summary: "High JVM heap memory usage"
+          description: "JVM heap memory usage is {{ $value }}% on {{ $labels.instance }}."
+          runbook_url: "https://wiki.company.com/runbooks/high-memory-usage"
+
+      - alert: CPUUsageHigh
+        expr: rate(process_cpu_seconds_total{job=~"java-microservice.*"}[5m]) * 100 > 80
+        for: 3m
+        labels:
+          severity: critical
+          team: devops
+          service: java-microservice
+        annotations:
+          summary: "High CPU usage detected"
+          description: "CPU usage is {{ $value }}% on {{ $labels.instance }}."
+
+      # High-Priority Warning Alerts
+      - alert: HighGCTime
+        expr: rate(jvm_gc_collection_seconds_sum{job=~"java-microservice.*"}[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          team: devops
+          service: java-microservice
+        annotations:
+          summary: "High garbage collection time"
+          description: "GC time is {{ $value }}s/sec on {{ $labels.instance }}."
+
+      - alert: DatabaseConnectionPoolLow
+        expr: |
+          (hikaricp_connections_active{job=~"java-microservice.*"} / 
+           hikaricp_connections_max{job=~"java-microservice.*"}) * 100 > 80
+        for: 2m
+        labels:
+          severity: warning
+          team: devops
+          service: java-microservice
+        annotations:
+          summary: "Database connection pool usage high"
+          description: "Connection pool usage is {{ $value }}% on {{ $labels.instance }}."
+
+      - alert: PodCrashLooping
+        expr: |
+          increase(kube_pod_container_status_restarts_total{
+            namespace=~"development|staging|production", 
+            pod=~".*java-microservice.*"
+          }[1h]) > 3
+        for: 5m
+        labels:
+          severity: warning
+          team: devops
+          service: java-microservice
+        annotations:
+          summary: "Pod is crash looping"
+          description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has restarted {{ $value }} times in the last hour."
+
+      - alert: TooManyThreads
+        expr: jvm_threads_live_threads{job=~"java-microservice.*"} > 500
+        for: 3m
+        labels:
+          severity: warning
+          team: devops
+          service: java-microservice
+        annotations:
+          summary: "High thread count"
+          description: "Thread count is {{ $value }} on {{ $labels.instance }}."
+
+      # Medium-Priority Alerts
+      - alert: DiskSpaceRunningLow
+        expr: |
+          (1 - (node_filesystem_avail_bytes{mountpoint="/"} / 
+                node_filesystem_size_bytes{mountpoint="/"})) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          team: devops
+          service: java-microservice
+        annotations:
+          summary: "Disk space running low"
+          description: "Disk usage is {{ $value }}% on {{ $labels.instance }}."
+
+      - alert: NetworkLatencyHigh
+        expr: |
+          histogram_quantile(0.99, 
+            sum(rate(http_client_requests_seconds_bucket{job=~"java-microservice.*"}[5m])) by (le)
+          ) > 2
+        for: 3m
+        labels:
+          severity: warning
+          team: devops
+          service: java-microservice
+        annotations:
+          summary: "High network latency detected"
+          description: "99th percentile network latency is {{ $value }}s."
+
+      - alert: FileDescriptorUsageHigh
+        expr: |
+          (process_open_fds{job=~"java-microservice.*"} / 
+           process_max_fds{job=~"java-microservice.*"}) * 100 > 80
+        for: 3m
+        labels:
+          severity: warning
+          team: devops
+          service: java-microservice
+        annotations:
+          summary: "High file descriptor usage"
+          description: "File descriptor usage is {{ $value }}% on {{ $labels.instance }}."
+
+      # Kubernetes Infrastructure Alerts
+      - alert: PodNotReady
+        expr: |
+          kube_pod_status_ready{
+            condition="false", 
+            namespace=~"development|staging|production", 
+            pod=~".*java-microservice.*"
+          } == 1
+        for: 5m
+        labels:
+          severity: warning
+          team: devops
+          service: java-microservice
+        annotations:
+          summary: "Pod not ready"
+          description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has been not ready for more than 5 minutes."
+
+      - alert: PVCUsageHigh
+        expr: |
+          (kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          team: devops
+          service: java-microservice
+        annotations:
+          summary: "PVC usage high"
+          description: "PVC usage is {{ $value }}% for {{ $labels.persistentvolumeclaim }}."
+
+      - alert: NodeNotReady
+        expr: kube_node_status_condition{condition="Ready", status="true"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          team: devops
+          service: infrastructure
+        annotations:
+          summary: "Node not ready"
+          description: "Node {{ $labels.node }} is not ready."
+
+  - name: BusinessMetricsAlerts
+    interval: 60s
+    rules:
+      - alert: LowRequestVolume
+        expr: |
+          sum(rate(http_server_requests_total{job=~"java-microservice.*"}[5m])) < 1
+        for: 10m
+        labels:
+          severity: warning
+          team: product
+          service: java-microservice
+        annotations:
+          summary: "Unusually low request volume"
+          description: "Request rate is {{ $value }} req/sec, which is unusually low."
+
+      - alert: HighDatabaseQueryTime
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(spring_data_repository_invocations_seconds_bucket{job=~"java-microservice.*"}[5m])) by (le)
+          ) > 0.5
+        for: 3m
+        labels:
+          severity: warning
+          team: devops
+          service: java-microservice
+        annotations:
+          summary: "High database query time"
+          description: "95th percentile database query time is {{ $value }}s."
+
+  - name: SecurityAlerts
+    interval: 60s
+    rules:
+      - alert: TooManyFailedLogins
+        expr: |
+          sum(rate(http_server_requests_total{
+            job=~"java-microservice.*", 
+            uri="/login", 
+            status="401"
+          }[5m])) > 10
+        for: 1m
+        labels:
+          severity: warning
+          team: security
+          service: java-microservice
+        annotations:
+          summary: "High number of failed login attempts"
+          description: "Failed login rate is {{ $value }} attempts/sec."

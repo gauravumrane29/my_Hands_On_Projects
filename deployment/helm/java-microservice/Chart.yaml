@@ -1,0 +1,23 @@
+apiVersion: v2
+name: java-microservice
+description: Full-stack Java microservice with React frontend and PostgreSQL
+version: 2.0.0
+appVersion: "2.0.0"
+home: https://github.com/your-org/devops-project
+maintainers:
+  - name: DevOps Team
+    email: devops@example.com
+
+dependencies:
+  - name: postgresql
+    version: "12.12.10"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: postgresql.enabled
+  - name: redis
+    version: "18.1.5"
+    repository: "https://charts.bitnami.com/bitnami" 
+    condition: redis.enabled
+
+annotations:
+  category: Application
+  licenses: Apache-2.0

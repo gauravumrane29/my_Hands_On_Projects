@@ -1,0 +1,304 @@
+# Production Environment Configuration
+# Override default values for production environment
+
+app:
+  name: java-microservice
+  version: "prod-2.0.0"
+
+# Backend Configuration for Production
+backend:
+  enabled: true
+  image:
+    tag: "2.0.0"
+    pullPolicy: IfNotPresent
+  ecr:
+    accountId: "PRODUCTION_ACCOUNT_ID"
+    repositoryName: java-microservice-backend
+  deployment:
+    replicaCount: 5
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 25%
+        maxSurge: 25%
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+    requests:
+      cpu: 1000m
+      memory: 1Gi
+  env:
+    SPRING_PROFILES_ACTIVE: production
+    JAVA_OPTS: "-Xmx1.5g -Xms1g -XX:+UseG1GC -XX:+UseStringDeduplication -XX:MaxGCPauseMillis=200"
+
+# Frontend Configuration for Production
+frontend:
+  enabled: true
+  image:
+    tag: "2.0.0"
+    pullPolicy: IfNotPresent
+  ecr:
+    accountId: "PRODUCTION_ACCOUNT_ID"
+    repositoryName: java-microservice-frontend
+  deployment:
+    replicaCount: 3
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 33%
+        maxSurge: 33%
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+
+# Database Configuration for Production (using external RDS)
+postgresql:
+  enabled: false  # Use external RDS in production
+
+# External Database Configuration (injected via CI/CD)
+externalDatabase:
+  host: "rds-postgres-production.cluster-xyz.us-east-1.rds.amazonaws.com"
+  port: 5432
+  database: "demoapp_prod"
+  username: "app_user"
+  # Password injected via Kubernetes secret
+
+# Redis Configuration for Production (using ElastiCache)
+redis:
+  enabled: false  # Use external ElastiCache in production
+
+# External Redis Configuration
+externalRedis:
+  host: "elasticache-redis-prod.abc123.cache.amazonaws.com"
+  port: 6379
+
+# HPA Configuration for Production (aggressive)
+hpa:
+  backend:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 60
+    targetMemoryUtilizationPercentage: 70
+    behavior:
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+        - type: Percent
+          value: 25
+          periodSeconds: 60
+      scaleUp:
+        stabilizationWindowSeconds: 60
+        policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+  frontend:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+# Pod Disruption Budget for Production (strict)
+podDisruptionBudget:
+  backend:
+    enabled: true
+    minAvailable: 2
+  frontend:
+    enabled: true
+    minAvailable: 1
+
+# Ingress Configuration for Production
+ingress:
+  enabled: true
+  className: "alb"
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:us-east-1:ACCOUNT:certificate/CERTIFICATE_ID"
+    alb.ingress.kubernetes.io/healthcheck-path: /actuator/health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '15'
+    alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/success-codes: '200'
+    # Security headers
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=60
+  hosts:
+    - host: api.yourapp.com
+      paths:
+        - path: /api
+          pathType: Prefix
+          backend:
+            service:
+              name: backend
+              port:
+                number: 80
+        - path: /actuator/health
+          pathType: Prefix
+          backend:
+            service:
+              name: backend
+              port:
+                number: 80
+    - host: yourapp.com
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: frontend
+              port:
+                number: 80
+  tls:
+    - secretName: yourapp-tls
+      hosts:
+        - api.yourapp.com
+        - yourapp.com
+
+# ConfigMap with production-specific configuration
+configMap:
+  data:
+    application.yml: |
+      spring:
+        application:
+          name: java-microservice
+        profiles:
+          active: production
+        datasource:
+          url: jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME}
+          username: ${DB_USERNAME}
+          password: ${DB_PASSWORD}
+          driver-class-name: org.postgresql.Driver
+          hikari:
+            maximum-pool-size: 20
+            minimum-idle: 5
+            idle-timeout: 300000
+            max-lifetime: 1200000
+            connection-timeout: 20000
+        jpa:
+          hibernate:
+            ddl-auto: validate
+          show-sql: false
+          properties:
+            hibernate:
+              dialect: org.hibernate.dialect.PostgreSQLDialect
+              jdbc:
+                batch_size: 25
+        flyway:
+          enabled: true
+          locations: classpath:db/migration
+          baseline-on-migrate: true
+        redis:
+          host: ${REDIS_HOST}
+          port: ${REDIS_PORT}
+          timeout: 2000ms
+          lettuce:
+            pool:
+              max-active: 8
+              max-wait: -1ms
+              max-idle: 8
+              min-idle: 0
+      server:
+        port: 8080
+        shutdown: graceful
+        tomcat:
+          threads:
+            max: 200
+            min-spare: 10
+      management:
+        endpoints:
+          web:
+            exposure:
+              include: health,info,prometheus,metrics
+        endpoint:
+          health:
+            show-details: when-authorized
+        health:
+          readinessState:
+            enabled: true
+          livenessState:
+            enabled: true
+        metrics:
+          export:
+            prometheus:
+              enabled: true
+      logging:
+        level:
+          com.example: INFO
+          org.springframework.web: WARN
+          org.hibernate: WARN
+        logback:
+          rollingpolicy:
+            max-file-size: 100MB
+            max-history: 30
+
+# Production resource quotas
+resources:
+  requests:
+    cpu: 1200m
+    memory: 1.5Gi
+  limits:
+    cpu: 2500m
+    memory: 3Gi
+
+# Production-specific node selection (use optimized instances)
+nodeSelector:
+  kubernetes.io/os: linux
+  node.kubernetes.io/instance-type: "c5.large"
+
+# Strict affinity rules for production
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+    - labelSelector:
+        matchExpressions:
+        - key: app.kubernetes.io/name
+          operator: In
+          values:
+          - java-microservice
+      topologyKey: kubernetes.io/hostname
+
+# Enhanced security for production
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1001
+  capabilities:
+    drop:
+    - ALL
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  fsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
+
+# Network policy enabled for production security
+networkPolicy:
+  enabled: true
+  policyTypes:
+    - Ingress
+    - Egress
+
+# Monitoring enabled for production
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+    labels:
+      app: java-microservice
+    interval: 30s
+    scrapeTimeout: 10s

@@ -1,0 +1,114 @@
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: java-microservice-peer-auth
+  namespace: production
+  labels:
+    app.kubernetes.io/name: java-microservice-peer-auth
+    app.kubernetes.io/component: istio-security
+    environment: production
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: java-microservice
+  mtls:
+    mode: STRICT
+
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: java-microservice-authz
+  namespace: production
+  labels:
+    app.kubernetes.io/name: java-microservice-authz
+    app.kubernetes.io/component: istio-security
+    environment: production
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: java-microservice
+  rules:
+  # Allow health checks from anywhere
+  - from:
+    - source: {}
+    to:
+    - operation:
+        paths: ["/actuator/health", "/actuator/health/*"]
+        methods: ["GET"]
+  # Allow Prometheus scraping
+  - from:
+    - source:
+        namespaces: ["monitoring", "istio-system"]
+    to:
+    - operation:
+        paths: ["/actuator/prometheus", "/actuator/metrics"]
+        methods: ["GET"]
+  # Allow application traffic from ingress gateway
+  - from:
+    - source:
+        namespaces: ["istio-system"]
+    to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+  # Allow inter-service communication within namespace
+  - from:
+    - source:
+        namespaces: ["production"]
+    to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+
+---
+apiVersion: security.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: external-apis
+  namespace: production
+  labels:
+    app.kubernetes.io/name: external-apis
+    app.kubernetes.io/component: istio-networking
+spec:
+  hosts:
+  - api.external-service.com
+  - database.amazonaws.com
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  - number: 5432
+    name: postgres
+    protocol: TCP
+  location: MESH_EXTERNAL
+  resolution: DNS
+
+---
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: java-microservice-telemetry
+  namespace: production
+  labels:
+    app.kubernetes.io/name: java-microservice-telemetry
+    app.kubernetes.io/component: istio-telemetry
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: java-microservice
+  metrics:
+  - providers:
+    - name: prometheus
+  - overrides:
+    - match:
+        metric: requests_total
+      tagOverrides:
+        destination_service_name:
+          value: "java-microservice"
+        destination_service_namespace:
+          value: "production"
+  accessLogging:
+  - providers:
+    - name: otel
+  tracing:
+  - providers:
+    - name: jaeger

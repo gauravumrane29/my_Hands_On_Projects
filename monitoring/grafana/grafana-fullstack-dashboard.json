@@ -1,0 +1,367 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Java Microservice Full-Stack Dashboard",
+    "tags": ["java", "spring-boot", "react", "postgresql", "redis", "microservice", "prometheus"],
+    "style": "dark",
+    "timezone": "browser",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Service Health Overview",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "up{job=~\".*backend.*\"}",
+            "format": "time_series",
+            "legendFormat": "Backend - {{kubernetes_namespace}}"
+          },
+          {
+            "expr": "up{job=~\".*frontend.*\"}",
+            "format": "time_series", 
+            "legendFormat": "Frontend - {{kubernetes_namespace}}"
+          },
+          {
+            "expr": "up{job=~\".*postgresql.*\"}",
+            "format": "time_series",
+            "legendFormat": "PostgreSQL - {{kubernetes_namespace}}"
+          },
+          {
+            "expr": "up{job=~\".*redis.*\"}",
+            "format": "time_series",
+            "legendFormat": "Redis - {{kubernetes_namespace}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "green", "value": 1}
+              ]
+            },
+            "mappings": [
+              {"options": {"0": {"text": "DOWN"}}, "type": "value"},
+              {"options": {"1": {"text": "UP"}}, "type": "value"}
+            ],
+            "unit": "none"
+          }
+        },
+        "gridPos": {"h": 6, "w": 24, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Backend API Request Rate",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "sum(rate(http_server_requests_total{job=~\".*backend.*\"}[5m])) by (method, status, uri)",
+            "format": "time_series",
+            "legendFormat": "{{method}} {{uri}} - {{status}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "unit": "reqps",
+            "min": 0
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6}
+      },
+      {
+        "id": 3,
+        "title": "Backend Response Time (P95)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_duration_seconds_bucket{job=~\".*backend.*\"}[5m])) by (le, uri))",
+            "format": "time_series",
+            "legendFormat": "P95 - {{uri}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "unit": "s",
+            "min": 0
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6}
+      },
+      {
+        "id": 4,
+        "title": "Frontend HTTP Requests (Nginx)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "sum(rate(nginx_http_requests_total{job=~\".*frontend.*\"}[5m])) by (status)",
+            "format": "time_series",
+            "legendFormat": "Status {{status}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "unit": "reqps",
+            "min": 0
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14}
+      },
+      {
+        "id": 5,
+        "title": "Frontend Response Time (Nginx)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(nginx_http_request_duration_seconds_sum{job=~\".*frontend.*\"}[5m]) / rate(nginx_http_request_duration_seconds_count{job=~\".*frontend.*\"}[5m])",
+            "format": "time_series",
+            "legendFormat": "Avg Response Time"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "unit": "s",
+            "min": 0
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14}
+      },
+      {
+        "id": 6,
+        "title": "PostgreSQL Connections",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "pg_stat_database_numbackends{job=~\".*postgresql.*\"}",
+            "format": "time_series",
+            "legendFormat": "Active Connections - {{datname}}"
+          },
+          {
+            "expr": "pg_settings_max_connections{job=~\".*postgresql.*\"}",
+            "format": "time_series",
+            "legendFormat": "Max Connections"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "unit": "short",
+            "min": 0
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 22}
+      },
+      {
+        "id": 7,
+        "title": "PostgreSQL Query Performance",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(pg_stat_database_tup_returned{job=~\".*postgresql.*\"}[5m])",
+            "format": "time_series",
+            "legendFormat": "Rows Returned/s - {{datname}}"
+          },
+          {
+            "expr": "rate(pg_stat_database_tup_inserted{job=~\".*postgresql.*\"}[5m])",
+            "format": "time_series",
+            "legendFormat": "Rows Inserted/s - {{datname}}"
+          },
+          {
+            "expr": "rate(pg_stat_database_tup_updated{job=~\".*postgresql.*\"}[5m])",
+            "format": "time_series",
+            "legendFormat": "Rows Updated/s - {{datname}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "unit": "ops",
+            "min": 0
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 22}
+      },
+      {
+        "id": 8,
+        "title": "Redis Cache Performance",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(redis_commands_total{job=~\".*redis.*\"}[5m])",
+            "format": "time_series",
+            "legendFormat": "Commands/s - {{cmd}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "unit": "ops",
+            "min": 0
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 30}
+      },
+      {
+        "id": 9,
+        "title": "Redis Memory Usage",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "redis_memory_used_bytes{job=~\".*redis.*\"}",
+            "format": "time_series",
+            "legendFormat": "Used Memory"
+          },
+          {
+            "expr": "redis_memory_max_bytes{job=~\".*redis.*\"}",
+            "format": "time_series",
+            "legendFormat": "Max Memory"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "unit": "bytes",
+            "min": 0
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 30}
+      },
+      {
+        "id": 10,
+        "title": "JVM Memory Usage (Backend)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "jvm_memory_used_bytes{job=~\".*backend.*\", area=\"heap\"}",
+            "format": "time_series",
+            "legendFormat": "Heap Used - {{kubernetes_pod_name}}"
+          },
+          {
+            "expr": "jvm_memory_max_bytes{job=~\".*backend.*\", area=\"heap\"}",
+            "format": "time_series",
+            "legendFormat": "Heap Max - {{kubernetes_pod_name}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "unit": "bytes",
+            "min": 0
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 38}
+      },
+      {
+        "id": 11,
+        "title": "JVM Garbage Collection",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(jvm_gc_collection_seconds_sum{job=~\".*backend.*\"}[5m])",
+            "format": "time_series",
+            "legendFormat": "GC Time/s - {{gc}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "unit": "s",
+            "min": 0
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 38}
+      },
+      {
+        "id": 12,
+        "title": "Error Rate by Service",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "sum(rate(http_server_requests_total{job=~\".*backend.*\", status=~\"4..|5..\"}[5m])) by (kubernetes_namespace, status) / sum(rate(http_server_requests_total{job=~\".*backend.*\"}[5m])) by (kubernetes_namespace) * 100",
+            "format": "time_series",
+            "legendFormat": "Backend Error Rate - {{kubernetes_namespace}}"
+          },
+          {
+            "expr": "sum(rate(nginx_http_requests_total{job=~\".*frontend.*\", status=~\"4..|5..\"}[5m])) by (kubernetes_namespace, status) / sum(rate(nginx_http_requests_total{job=~\".*frontend.*\"}[5m])) by (kubernetes_namespace) * 100",
+            "format": "time_series",
+            "legendFormat": "Frontend Error Rate - {{kubernetes_namespace}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "unit": "percent",
+            "min": 0,
+            "max": 100
+          }
+        },
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 46}
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "name": "namespace",
+          "type": "query",
+          "query": "label_values(up, kubernetes_namespace)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*"
+        },
+        {
+          "name": "instance",
+          "type": "query", 
+          "query": "label_values(up{kubernetes_namespace=~\"$namespace\"}, kubernetes_pod_name)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*"
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "Deployments",
+          "datasource": "Prometheus",
+          "expr": "changes(up{job=~\".*backend.*|.*frontend.*\"}[1m])",
+          "textFormat": "Deployment: {{kubernetes_pod_name}}",
+          "titleFormat": "Service Restart"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "builders": [{
+    "type": "amazon-ebs",
+    "region": "us-east-1",
+    "source_ami_filter": {
+      "filters": {
+        "virtualization-type": "hvm",
+        "name": "amzn2-ami-hvm-*-x86_64-gp2",
+        "root-device-type": "ebs"
+      },
+      "owners": ["amazon"],
+      "most_recent": true
+    },
+    "instance_type": "t2.micro",
+    "ssh_username": "ec2-user",
+    "ami_name": "java-app-ami-{{timestamp}}",
+    "ami_description": "Custom AMI with Java 17, Docker, and application dependencies",
+    "tags": {
+      "Name": "JavaApp-AMI",
+      "Environment": "{{user `environment`}}",
+      "Project": "3-tier-devops",
+      "CreatedBy": "Packer",
+      "BaseAMI": "{{.SourceAMI}}",
+      "BuildDate": "{{isotime \"2006-01-02T15:04:05Z\"}}"
+    },
+    "run_tags": {
+      "Name": "Packer-Builder-JavaApp"
+    },
+    "run_volume_tags": {
+      "Name": "Packer-Builder-JavaApp-Volume"
+    }
+  }],
+  "provisioners": [
+    {
+      "type": "shell",
+      "inline": [
+        "echo 'Waiting for cloud-init to complete...'",
+        "cloud-init status --wait",
+        "echo 'System ready for provisioning'"
+      ]
+    },
+    {
+      "type": "ansible",
+      "playbook_file": "../ansible/configure-app.yml",
+      "user": "ec2-user",
+      "use_proxy": false,
+      "ansible_env_vars": [
+        "ANSIBLE_HOST_KEY_CHECKING=False",
+        "ANSIBLE_SSH_ARGS='-o ForwardAgent=yes -o ControlMaster=auto -o ControlPersist=60s'",
+        "ANSIBLE_NOCOLOR=True"
+      ],
+      "extra_arguments": [
+        "--verbose",
+        "--extra-vars",
+        "target_env={{user `environment`}} app_version={{user `app_version`}}"
+      ]
+    },
+    {
+      "type": "shell",
+      "inline": [
+        "echo 'Running post-provision cleanup...'",
+        "sudo yum clean all",
+        "sudo rm -rf /tmp/*",
+        "sudo rm -rf /var/tmp/*",
+        "history -c && history -w",
+        "echo 'AMI preparation completed'"
+      ]
+    }
+  ],
+  "variables": {
+    "environment": "dev",
+    "app_version": "latest",
+    "region": "us-east-1"
+  },
+  "post-processors": [
+    {
+      "type": "manifest",
+      "output": "manifest.json",
+      "strip_path": true
+    }
+  ]
+}

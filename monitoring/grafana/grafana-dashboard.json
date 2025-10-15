@@ -1,0 +1,354 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Java Microservice Dashboard",
+    "tags": ["java", "spring-boot", "microservice", "prometheus"],
+    "style": "dark",
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Service Health Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "up{job=~\"java-microservice.*\"}",
+            "format": "time_series",
+            "legendFormat": "{{instance}} - {{kubernetes_namespace}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "green", "value": 1}
+              ]
+            },
+            "mappings": [
+              {"options": {"0": {"text": "DOWN"}}, "type": "value"},
+              {"options": {"1": {"text": "UP"}}, "type": "value"}
+            ]
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "HTTP Request Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "sum(rate(http_server_requests_total{job=~\"java-microservice.*\"}[5m])) by (method, status, uri)",
+            "format": "time_series",
+            "legendFormat": "{{method}} {{uri}} - {{status}}"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Requests/sec",
+            "min": 0
+          },
+          {
+            "show": false
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "HTTP Response Time (95th Percentile)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=~\"java-microservice.*\"}[5m])) by (le, method, uri))",
+            "format": "time_series",
+            "legendFormat": "{{method}} {{uri}} - 95th percentile"
+          },
+          {
+            "expr": "histogram_quantile(0.50, sum(rate(http_server_requests_seconds_bucket{job=~\"java-microservice.*\"}[5m])) by (le, method, uri))",
+            "format": "time_series",
+            "legendFormat": "{{method}} {{uri}} - 50th percentile"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Response Time (seconds)",
+            "min": 0
+          },
+          {
+            "show": false
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "id": 4,
+        "title": "HTTP Status Codes",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "sum(rate(http_server_requests_total{job=~\"java-microservice.*\"}[5m])) by (status)",
+            "format": "time_series",
+            "legendFormat": "{{status}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      },
+      {
+        "id": 5,
+        "title": "JVM Memory Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "jvm_memory_used_bytes{job=~\"java-microservice.*\", area=\"heap\"}",
+            "format": "time_series",
+            "legendFormat": "{{instance}} - Heap Used"
+          },
+          {
+            "expr": "jvm_memory_max_bytes{job=~\"java-microservice.*\", area=\"heap\"}",
+            "format": "time_series",
+            "legendFormat": "{{instance}} - Heap Max"
+          },
+          {
+            "expr": "jvm_memory_used_bytes{job=~\"java-microservice.*\", area=\"nonheap\"}",
+            "format": "time_series",
+            "legendFormat": "{{instance}} - Non-Heap Used"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Bytes",
+            "min": 0
+          },
+          {
+            "show": false
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+      },
+      {
+        "id": 6,
+        "title": "JVM Garbage Collection",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(jvm_gc_collection_seconds_sum{job=~\"java-microservice.*\"}[5m])",
+            "format": "time_series",
+            "legendFormat": "{{instance}} - {{gc}}"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "GC Time/sec",
+            "min": 0
+          },
+          {
+            "show": false
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+      },
+      {
+        "id": 7,
+        "title": "CPU Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(process_cpu_seconds_total{job=~\"java-microservice.*\"}[5m]) * 100",
+            "format": "time_series",
+            "legendFormat": "{{instance}} - CPU Usage %"
+          },
+          {
+            "expr": "system_cpu_usage{job=~\"java-microservice.*\"}",
+            "format": "time_series",
+            "legendFormat": "{{instance}} - System CPU %"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "CPU Usage (%)",
+            "min": 0,
+            "max": 100
+          },
+          {
+            "show": false
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24}
+      },
+      {
+        "id": 8,
+        "title": "Thread Count",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "jvm_threads_live_threads{job=~\"java-microservice.*\"}",
+            "format": "time_series",
+            "legendFormat": "{{instance}} - Live Threads"
+          },
+          {
+            "expr": "jvm_threads_daemon_threads{job=~\"java-microservice.*\"}",
+            "format": "time_series",
+            "legendFormat": "{{instance}} - Daemon Threads"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Thread Count",
+            "min": 0
+          },
+          {
+            "show": false
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24}
+      },
+      {
+        "id": 9,
+        "title": "Database Connection Pool",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "hikaricp_connections_active{job=~\"java-microservice.*\"}",
+            "format": "time_series",
+            "legendFormat": "{{instance}} - Active Connections"
+          },
+          {
+            "expr": "hikaricp_connections_idle{job=~\"java-microservice.*\"}",
+            "format": "time_series",
+            "legendFormat": "{{instance}} - Idle Connections"
+          },
+          {
+            "expr": "hikaricp_connections_max{job=~\"java-microservice.*\"}",
+            "format": "time_series",
+            "legendFormat": "{{instance}} - Max Connections"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Connection Count",
+            "min": 0
+          },
+          {
+            "show": false
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32}
+      },
+      {
+        "id": 10,
+        "title": "Error Rate",
+        "type": "singlestat",
+        "targets": [
+          {
+            "expr": "sum(rate(http_server_requests_total{job=~\"java-microservice.*\", status=~\"4..|5..\"}[5m])) / sum(rate(http_server_requests_total{job=~\"java-microservice.*\"}[5m])) * 100",
+            "format": "time_series"
+          }
+        ],
+        "valueName": "current",
+        "format": "percent",
+        "thresholds": "1,5",
+        "colorBackground": true,
+        "colors": ["rgba(50, 172, 45, 0.97)", "rgba(237, 129, 40, 0.89)", "rgba(245, 54, 54, 0.9)"],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32}
+      },
+      {
+        "id": 11,
+        "title": "Pod Restarts",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "increase(kube_pod_container_status_restarts_total{namespace=~\"development|staging|production\", pod=~\".*java-microservice.*\"}[1h])",
+            "format": "time_series",
+            "legendFormat": "{{namespace}} - {{pod}}"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Restart Count",
+            "min": 0
+          },
+          {
+            "show": false
+          }
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 40}
+      },
+      {
+        "id": 12,
+        "title": "Network I/O",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(container_network_receive_bytes_total{namespace=~\"development|staging|production\", pod=~\".*java-microservice.*\"}[5m])",
+            "format": "time_series",
+            "legendFormat": "{{namespace}} - {{pod}} - Received"
+          },
+          {
+            "expr": "rate(container_network_transmit_bytes_total{namespace=~\"development|staging|production\", pod=~\".*java-microservice.*\"}[5m])",
+            "format": "time_series",
+            "legendFormat": "{{namespace}} - {{pod}} - Transmitted"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Bytes/sec",
+            "min": 0
+          },
+          {
+            "show": false
+          }
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 48}
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"],
+      "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d"]
+    },
+    "templating": {
+      "list": [
+        {
+          "name": "namespace",
+          "type": "query",
+          "query": "label_values(up{job=~\"java-microservice.*\"}, kubernetes_namespace)",
+          "refresh": 1,
+          "includeAll": true,
+          "multi": true
+        },
+        {
+          "name": "instance",
+          "type": "query", 
+          "query": "label_values(up{job=~\"java-microservice.*\", kubernetes_namespace=~\"$namespace\"}, instance)",
+          "refresh": 1,
+          "includeAll": true,
+          "multi": true
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "Deployments",
+          "datasource": "Prometheus",
+          "expr": "resets(process_start_time_seconds{job=~\"java-microservice.*\"}[1m])",
+          "titleFormat": "Deployment",
+          "textFormat": "Application restarted"
+        }
+      ]
+    },
+    "refresh": "30s",
+    "schemaVersion": 30,
+    "version": 1,
+    "links": []
+  }
+}

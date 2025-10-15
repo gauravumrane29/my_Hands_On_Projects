@@ -1,0 +1,46 @@
+# Docker ignore file for Spring Boot application
+
+# Build artifacts
+target/
+!target/*.jar
+*.jar.original
+
+# IDE files
+.idea/
+*.iml
+.project
+.classpath
+.settings/
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+*.tmp
+
+# Maven
+.mvn/wrapper/maven-wrapper.jar
+!.mvn/wrapper/maven-wrapper.properties
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+README.md
+*.md
+
+# Test files
+src/test/
+
+# Development files
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# Environment files
+.env*

@@ -1,0 +1,13 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: java-microservice
+  labels:
+    app.kubernetes.io/name: java-microservice
+    app.kubernetes.io/instance: java-microservice
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: java-microservice
+      app.kubernetes.io/instance: java-microservice

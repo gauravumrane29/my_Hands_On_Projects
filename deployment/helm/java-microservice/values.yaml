@@ -1,0 +1,429 @@
+# Full-Stack Java Microservice Helm Chart Values
+# Optimized for Amazon EKS deployment with PostgreSQL and React frontend
+
+# Global Configuration
+global:
+  storageClass: "gp3"
+  imageRegistry: ""
+  imagePullSecrets: []
+
+# Application Configuration
+app:
+  name: java-microservice
+  version: "2.0.0"
+  
+# Backend Service Configuration
+backend:
+  enabled: true
+  name: backend
+  
+  # Container Image Configuration
+  image:
+    registry: ""  # Leave empty to use AWS ECR
+    repository: java-microservice-backend
+    tag: "latest"
+    pullPolicy: IfNotPresent
+    
+  # AWS ECR Configuration
+  ecr:
+    enabled: true
+    region: us-east-1
+    accountId: ""  # Set via CI/CD or values override
+    repositoryName: java-microservice-backend
+    
+  # Service Configuration
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8080
+    annotations: {}
+    labels: {}
+    
+  # Deployment Configuration
+  deployment:
+    replicaCount: 3
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 25%
+        maxSurge: 25%
+        
+    # Pod Template Configuration
+    podAnnotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/path: "/actuator/prometheus"
+      prometheus.io/port: "8080"
+      
+    podLabels: {}
+    
+  # Resource Configuration
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1.5Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+      
+  # Health Checks
+  healthcheck:
+    enabled: true
+    livenessProbe:
+      httpGet:
+        path: /actuator/health/liveness
+        port: 9090
+      initialDelaySeconds: 90
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readinessProbe:
+      httpGet:
+        path: /actuator/health/readiness
+        port: 9090
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+      
+  # Environment Configuration
+  env:
+    SPRING_PROFILES_ACTIVE: kubernetes
+    JAVA_OPTS: "-Xmx1g -Xms512m -XX:+UseG1GC -XX:+UseStringDeduplication"
+    
+  # Additional environment variables from secrets/configmaps
+  envFrom: []
+
+# Frontend Service Configuration  
+frontend:
+  enabled: true
+  name: frontend
+  
+  # Container Image Configuration
+  image:
+    registry: ""
+    repository: java-microservice-frontend
+    tag: "latest"
+    pullPolicy: IfNotPresent
+    
+  # AWS ECR Configuration
+  ecr:
+    enabled: true
+    region: us-east-1
+    accountId: ""
+    repositoryName: java-microservice-frontend
+    
+  # Service Configuration
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 80
+    annotations: {}
+    labels: {}
+    
+  # Deployment Configuration
+  deployment:
+    replicaCount: 2
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 50%
+        maxSurge: 50%
+        
+    podAnnotations: {}
+    podLabels: {}
+    
+  # Resource Configuration
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+      
+  # Health Checks
+  healthcheck:
+    enabled: true
+    livenessProbe:
+      httpGet:
+        path: /
+        port: 3000
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readinessProbe:
+      httpGet:
+        path: /
+        port: 3000
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+# Database Configuration
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "postgres"
+    username: "postgres"
+    password: "postgres"
+    database: "demoapp"
+  architecture: standalone
+  primary:
+    persistence:
+      enabled: true
+      size: 8Gi
+      storageClass: "gp3"
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 250m
+        memory: 256Mi
+    service:
+      ports:
+        postgresql: 5432
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: false
+
+# Redis Configuration (for caching)
+redis:
+  enabled: true
+  auth:
+    enabled: false
+  architecture: standalone
+  master:
+    persistence:
+      enabled: true
+      size: 2Gi
+      storageClass: "gp3"
+    resources:
+      limits:
+        cpu: 200m
+        memory: 256Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+# Service Account Configuration (for AWS IAM integration)
+serviceAccount:
+  create: true
+  name: ""  # If empty, name is generated using fullname template
+  annotations:
+    # EKS IAM Role annotation for service account (IRSA)
+    eks.amazonaws.com/role-arn: ""  # Set via CI/CD or values override
+  automount: true
+
+# Pod Security Context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  fsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container Security Context
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1001
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+
+# Horizontal Pod Autoscaler
+hpa:
+  backend:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+    behavior:
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+      scaleUp:
+        stabilizationWindowSeconds: 60
+        policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+  frontend:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  backend:
+    enabled: true
+    minAvailable: 1
+  frontend:
+    enabled: true
+    minAvailable: 1
+
+# Ingress Configuration
+ingress:
+  enabled: true
+  className: "alb"
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    alb.ingress.kubernetes.io/healthcheck-path: /actuator/health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '30'
+    alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: '3'
+    alb.ingress.kubernetes.io/success-codes: '200'
+  hosts:
+    - host: your-app.example.com
+      paths:
+        - path: /api
+          pathType: Prefix
+          backend:
+            service:
+              name: backend
+              port:
+                number: 80
+        - path: /actuator
+          pathType: Prefix
+          backend:
+            service:
+              name: backend
+              port:
+                number: 80
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: frontend
+              port:
+                number: 80
+  tls:
+    - secretName: tls-secret
+      hosts:
+        - your-app.example.com
+
+# ConfigMap Configuration
+configMap:
+  enabled: true
+  data:
+    application.yml: |
+      spring:
+        application:
+          name: java-microservice
+        profiles:
+          active: kubernetes
+        datasource:
+          url: jdbc:postgresql://{{ .Release.Name }}-postgresql:5432/{{ .Values.postgresql.auth.database }}
+          username: {{ .Values.postgresql.auth.username }}
+          password: {{ .Values.postgresql.auth.password }}
+          driver-class-name: org.postgresql.Driver
+        jpa:
+          hibernate:
+            ddl-auto: validate
+          show-sql: false
+          properties:
+            hibernate:
+              dialect: org.hibernate.dialect.PostgreSQLDialect
+        flyway:
+          enabled: true
+          locations: classpath:db/migration
+          baseline-on-migrate: true
+        redis:
+          host: {{ .Release.Name }}-redis-master
+          port: 6379
+      server:
+        port: 8080
+        shutdown: graceful
+      management:
+        endpoints:
+          web:
+            exposure:
+              include: health,info,prometheus,metrics
+        endpoint:
+          health:
+            show-details: always
+        health:
+          readinessState:
+            enabled: true
+          livenessState:
+            enabled: true
+
+# Network Policy Configuration
+networkPolicy:
+  enabled: true
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: nginx-ingress
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 3000
+  egress:
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 5432  # PostgreSQL
+        - protocol: TCP
+          port: 6379  # Redis
+        - protocol: TCP
+          port: 53   # DNS
+        - protocol: UDP
+          port: 53   # DNS
+
+# Monitoring Configuration
+monitoring:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+    namespace: monitoring
+    labels: {}
+    interval: 30s
+    scrapeTimeout: 10s
+
+# Node Selection
+nodeSelector:
+  kubernetes.io/os: linux
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - java-microservice
+        topologyKey: kubernetes.io/hostname
+
+# Namespace Configuration
+namespace:
+  create: false
+  name: ""

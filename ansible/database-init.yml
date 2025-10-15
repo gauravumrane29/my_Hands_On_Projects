@@ -1,0 +1,232 @@
+---
+# Database Initialization Playbook for Java Microservice
+# This playbook handles PostgreSQL database setup and initial data loading
+
+- name: Initialize PostgreSQL Database for Java Microservice
+  hosts: all
+  become: true
+  vars:
+    db_host: "{{ hostvars[inventory_hostname]['db_host'] | default('localhost') }}"
+    db_port: "5432"
+    db_name: "demoapp"
+    db_username: "postgres"
+    db_password: "{{ hostvars[inventory_hostname]['db_password'] | default('postgres') }}"
+    app_user: "appuser"
+    
+  tasks:
+    - name: Test database connectivity
+      shell: |
+        PGPASSWORD="{{ db_password }}" psql -h "{{ db_host }}" -p "{{ db_port }}" -U "{{ db_username }}" -d "postgres" -c "SELECT version();"
+      register: db_connection_test
+      failed_when: db_connection_test.rc != 0
+      tags: [connectivity]
+
+    - name: Display database connection info
+      debug:
+        msg: "Successfully connected to PostgreSQL: {{ db_connection_test.stdout_lines[0] }}"
+      tags: [connectivity]
+
+    - name: Check if application database exists
+      shell: |
+        PGPASSWORD="{{ db_password }}" psql -h "{{ db_host }}" -p "{{ db_port }}" -U "{{ db_username }}" -d "postgres" -tAc "SELECT 1 FROM pg_database WHERE datname='{{ db_name }}'"
+      register: db_exists
+      tags: [database]
+
+    - name: Create application database if not exists
+      shell: |
+        PGPASSWORD="{{ db_password }}" psql -h "{{ db_host }}" -p "{{ db_port }}" -U "{{ db_username }}" -d "postgres" -c "CREATE DATABASE {{ db_name }};"
+      when: db_exists.stdout != "1"
+      tags: [database]
+
+    - name: Create database initialization scripts directory
+      file:
+        path: /opt/java-microservice/database
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0755'
+      tags: [scripts]
+
+    - name: Create users table schema
+      copy:
+        content: |
+          -- Users table for Java Microservice application
+          CREATE TABLE IF NOT EXISTS users (
+              id SERIAL PRIMARY KEY,
+              name VARCHAR(100) NOT NULL,
+              email VARCHAR(150) NOT NULL UNIQUE,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          );
+
+          -- Create indexes for better performance
+          CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+          CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at);
+
+          -- Create updated_at trigger function
+          CREATE OR REPLACE FUNCTION update_updated_at_column()
+          RETURNS TRIGGER AS $$
+          BEGIN
+              NEW.updated_at = CURRENT_TIMESTAMP;
+              RETURN NEW;
+          END;
+          $$ LANGUAGE plpgsql;
+
+          -- Create trigger to automatically update updated_at
+          DROP TRIGGER IF EXISTS update_users_updated_at ON users;
+          CREATE TRIGGER update_users_updated_at
+              BEFORE UPDATE ON users
+              FOR EACH ROW
+              EXECUTE FUNCTION update_updated_at_column();
+        dest: /opt/java-microservice/database/01_create_tables.sql
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0644'
+      tags: [scripts]
+
+    - name: Create sample data script
+      copy:
+        content: |
+          -- Sample data for testing
+          INSERT INTO users (name, email) VALUES 
+              ('John Doe', 'john.doe@example.com'),
+              ('Jane Smith', 'jane.smith@example.com'),
+              ('Bob Johnson', 'bob.johnson@example.com'),
+              ('Alice Brown', 'alice.brown@example.com'),
+              ('Charlie Wilson', 'charlie.wilson@example.com')
+          ON CONFLICT (email) DO NOTHING;
+
+          -- Display inserted data
+          SELECT 'Sample users inserted:' as message;
+          SELECT id, name, email, created_at FROM users ORDER BY id;
+        dest: /opt/java-microservice/database/02_sample_data.sql
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0644'
+      tags: [scripts]
+
+    - name: Run database schema creation
+      shell: |
+        PGPASSWORD="{{ db_password }}" psql -h "{{ db_host }}" -p "{{ db_port }}" -U "{{ db_username }}" -d "{{ db_name }}" -f /opt/java-microservice/database/01_create_tables.sql
+      register: schema_result
+      tags: [schema]
+
+    - name: Run sample data insertion
+      shell: |
+        PGPASSWORD="{{ db_password }}" psql -h "{{ db_host }}" -p "{{ db_port }}" -U "{{ db_username }}" -d "{{ db_name }}" -f /opt/java-microservice/database/02_sample_data.sql
+      register: data_result
+      tags: [data]
+
+    - name: Display schema creation result
+      debug:
+        msg: "{{ schema_result.stdout_lines }}"
+      tags: [schema]
+
+    - name: Display data insertion result
+      debug:
+        msg: "{{ data_result.stdout_lines }}"
+      tags: [data]
+
+    - name: Create database backup script
+      copy:
+        content: |
+          #!/bin/bash
+          # Database backup script for Java Microservice
+          
+          DB_HOST="{{ db_host }}"
+          DB_PORT="{{ db_port }}"
+          DB_NAME="{{ db_name }}"
+          DB_USER="{{ db_username }}"
+          DB_PASSWORD="{{ db_password }}"
+          
+          BACKUP_DIR="/opt/java-microservice/backup"
+          TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+          BACKUP_FILE="$BACKUP_DIR/db_backup_$TIMESTAMP.sql"
+          
+          echo "Creating database backup..."
+          mkdir -p "$BACKUP_DIR"
+          
+          PGPASSWORD="$DB_PASSWORD" pg_dump -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" > "$BACKUP_FILE"
+          
+          if [ $? -eq 0 ]; then
+              echo "Database backup created successfully: $BACKUP_FILE"
+              gzip "$BACKUP_FILE"
+              echo "Backup compressed: $BACKUP_FILE.gz"
+              
+              # Keep only last 7 days of backups
+              find "$BACKUP_DIR" -name "db_backup_*.sql.gz" -mtime +7 -delete
+              echo "Old backups cleaned up"
+          else
+              echo "Database backup failed!"
+              exit 1
+          fi
+        dest: /opt/java-microservice/database/backup.sh
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0755'
+      tags: [backup]
+
+    - name: Create database restore script
+      copy:
+        content: |
+          #!/bin/bash
+          # Database restore script for Java Microservice
+          
+          if [ $# -ne 1 ]; then
+              echo "Usage: $0 <backup_file>"
+              echo "Available backups:"
+              ls -la /opt/java-microservice/backup/db_backup_*.sql.gz 2>/dev/null || echo "No backups found"
+              exit 1
+          fi
+          
+          BACKUP_FILE="$1"
+          DB_HOST="{{ db_host }}"
+          DB_PORT="{{ db_port }}"
+          DB_NAME="{{ db_name }}"
+          DB_USER="{{ db_username }}"
+          DB_PASSWORD="{{ db_password }}"
+          
+          echo "Restoring database from: $BACKUP_FILE"
+          
+          if [[ "$BACKUP_FILE" == *.gz ]]; then
+              echo "Decompressing backup file..."
+              gunzip -c "$BACKUP_FILE" | PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME"
+          else
+              PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" < "$BACKUP_FILE"
+          fi
+          
+          if [ $? -eq 0 ]; then
+              echo "Database restore completed successfully"
+          else
+              echo "Database restore failed!"
+              exit 1
+          fi
+        dest: /opt/java-microservice/database/restore.sh
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0755'
+      tags: [backup]
+
+    - name: Verify database setup
+      shell: |
+        PGPASSWORD="{{ db_password }}" psql -h "{{ db_host }}" -p "{{ db_port }}" -U "{{ db_username }}" -d "{{ db_name }}" -c "\dt"
+      register: table_list
+      tags: [verification]
+
+    - name: Display database verification
+      debug:
+        msg: |
+          Database initialization completed successfully!
+          
+          Database: {{ db_name }}
+          Host: {{ db_host }}:{{ db_port }}
+          
+          Tables created:
+          {{ table_list.stdout }}
+          
+          Database scripts location: /opt/java-microservice/database/
+          - Schema: 01_create_tables.sql
+          - Sample data: 02_sample_data.sql
+          - Backup script: backup.sh
+          - Restore script: restore.sh
+      tags: [verification]

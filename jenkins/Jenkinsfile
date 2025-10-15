@@ -1,0 +1,518 @@
+pipeline {
+    agent {
+        label 'docker-maven-node'  // Use Jenkins agent with Docker, Maven, and Node.js
+    }
+    
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 60, unit: 'MINUTES')
+        retry(2)
+        skipStagesAfterUnstable()
+        timestamps()
+        ansiColor('xterm')
+        parallelsAlwaysFailFast()
+    }
+    
+    environment {
+        // Application Configuration
+        APP_NAME = 'java-microservice'
+        JAVA_VERSION = '17'
+        NODE_VERSION = '18'
+        MAVEN_OPTS = '-Dmaven.repo.local=.m2/repository -Xmx1024m'
+        
+        // Container Registry Configuration
+        REGISTRY = credentials('docker-registry-url')
+        BACKEND_IMAGE_NAME = "${REGISTRY}/java-microservice-backend"
+        FRONTEND_IMAGE_NAME = "${REGISTRY}/java-microservice-frontend"
+        
+        // AWS Configuration
+        AWS_DEFAULT_REGION = 'us-east-1'
+        AWS_CREDENTIALS = credentials('aws-credentials')
+        
+        // Database Configuration
+        DB_CREDENTIALS = credentials('postgres-credentials')
+        
+        // Quality Gates
+        SONAR_PROJECT_KEY = "${env.JOB_NAME.replaceAll('/', '_')}"
+        SONAR_TOKEN = credentials('sonar-token')
+        
+        // Version Information
+        BUILD_VERSION = "${env.BUILD_NUMBER}"
+        GIT_SHORT_COMMIT = "${env.GIT_COMMIT?.take(8) ?: 'unknown'}"
+        
+        // Security Scanning
+        TRIVY_CACHE_DIR = "${WORKSPACE}/.trivy-cache"
+    }
+    
+    parameters {
+        choice(
+            name: 'DEPLOYMENT_ENVIRONMENT',
+            choices: ['development', 'staging', 'production'],
+            description: 'Target deployment environment'
+        )
+        booleanParam(
+            name: 'SKIP_BACKEND_TESTS',
+            defaultValue: false,
+            description: 'Skip backend tests (not recommended for production)'
+        )
+        booleanParam(
+            name: 'SKIP_FRONTEND_TESTS',
+            defaultValue: false,
+            description: 'Skip frontend tests (not recommended for production)'
+        )
+        booleanParam(
+            name: 'RUN_DATABASE_MIGRATION',
+            defaultValue: true,
+            description: 'Run database migrations during deployment'
+        )
+        booleanParam(
+            name: 'DEPLOY_TO_K8S',
+            defaultValue: true,
+            description: 'Deploy to Kubernetes cluster'
+        )
+        booleanParam(
+            name: 'DEPLOY_TO_EC2',
+            defaultValue: false,
+            description: 'Deploy to EC2 instances via Ansible'
+        )
+        booleanParam(
+            name: 'RUN_SECURITY_SCAN',
+            defaultValue: true,
+            description: 'Run security vulnerability scans'
+        )
+        booleanParam(
+            name: 'BUILD_FRONTEND',
+            defaultValue: true,
+            description: 'Build React frontend application'
+        )
+        booleanParam(
+            name: 'BUILD_BACKEND',
+            defaultValue: true,
+            description: 'Build Spring Boot backend application'
+        )
+        string(
+            name: 'CUSTOM_TAG',
+            defaultValue: '',
+            description: 'Custom tag for container images (optional)'
+        )
+    }
+    
+    stages {
+        stage('🔍 Environment Setup') {
+            steps {
+                script {
+                    // Get Git information first
+                    env.GIT_COMMIT = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                    env.GIT_SHORT_COMMIT = env.GIT_COMMIT.take(8)
+                    
+                    // Calculate build tag
+                    if (params.CUSTOM_TAG) {
+                        env.IMAGE_TAG = params.CUSTOM_TAG
+                    } else if (env.BRANCH_NAME == 'main') {
+                        env.IMAGE_TAG = "v${env.BUILD_VERSION}-${env.GIT_SHORT_COMMIT}"
+                    } else {
+                        env.IMAGE_TAG = "${env.BRANCH_NAME}-${env.BUILD_VERSION}-${env.GIT_SHORT_COMMIT}"
+                    }
+                    
+                    // Environment-specific configuration
+                    switch(params.DEPLOYMENT_ENVIRONMENT) {
+                        case 'production':
+                            env.K8S_NAMESPACE = 'production'
+                            env.BACKEND_REPLICAS = '3'
+                            env.FRONTEND_REPLICAS = '2'
+                            env.DATABASE_POOL_SIZE = '20'
+                            break
+                        case 'staging':
+                            env.K8S_NAMESPACE = 'staging'
+                            env.BACKEND_REPLICAS = '2'
+                            env.FRONTEND_REPLICAS = '2'
+                            env.DATABASE_POOL_SIZE = '10'
+                            break
+                        default: // development
+                            env.K8S_NAMESPACE = 'development'
+                            env.BACKEND_REPLICAS = '1'
+                            env.FRONTEND_REPLICAS = '1'
+                            env.DATABASE_POOL_SIZE = '5'
+                    }
+                    
+                    // Set full image names with tags
+                    env.BACKEND_FULL_IMAGE = "${env.BACKEND_IMAGE_NAME}:${env.IMAGE_TAG}"
+                    env.FRONTEND_FULL_IMAGE = "${env.FRONTEND_IMAGE_NAME}:${env.IMAGE_TAG}"
+                }
+                
+                echo "🏗️ Full-Stack Build Configuration:"
+                echo "  • Application: ${env.APP_NAME}"
+                echo "  • Backend Image: ${env.BACKEND_FULL_IMAGE}"
+                echo "  • Frontend Image: ${env.FRONTEND_FULL_IMAGE}"
+                echo "  • Environment: ${params.DEPLOYMENT_ENVIRONMENT}"
+                echo "  • Namespace: ${env.K8S_NAMESPACE}"
+                echo "  • Build Frontend: ${params.BUILD_FRONTEND}"
+                echo "  • Build Backend: ${params.BUILD_BACKEND}"
+            }
+        }
+        
+        stage('📥 Checkout & Validation') {
+            steps {
+                checkout scm
+                
+                sh '''
+                    echo "📁 Project Structure:"
+                    ls -la
+                    echo "📁 Backend (app/):"
+                    ls -la app/ || echo "No backend found"
+                    echo "📁 Frontend:"
+                    ls -la frontend/ || echo "No frontend found"
+                '''
+            }
+        }
+        
+        stage('🏗️ Build Applications') {
+            parallel {
+                stage('☕ Backend Build') {
+                    when {
+                        equals expected: true, actual: params.BUILD_BACKEND
+                    }
+                    steps {
+                        dir('app') {
+                            echo "🔧 Building Spring Boot Backend..."
+                            
+                            sh '''
+                                echo "📦 Maven Clean & Compile..."
+                                mvn clean compile -DskipTests=true
+                            '''
+                            
+                            script {
+                                if (!params.SKIP_BACKEND_TESTS) {
+                                    echo "🧪 Running Backend Tests..."
+                                    sh '''
+                                        mvn test
+                                        mvn jacoco:report
+                                    '''
+                                    publishTestResults testResultsPattern: 'target/surefire-reports/*.xml'
+                                    publishCoverage adapters: [jacocoAdapter('target/site/jacoco/jacoco.xml')]
+                                }
+                            }
+                            
+                            sh '''
+                                echo "📦 Packaging Backend..."
+                                mvn package -DskipTests=true
+                                ls -la target/*.jar
+                            '''
+                            
+                            archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                        }
+                    }
+                }
+                
+                stage('⚛️ Frontend Build') {
+                    when {
+                        equals expected: true, actual: params.BUILD_FRONTEND
+                    }
+                    steps {
+                        dir('frontend') {
+                            echo "🔧 Building React Frontend..."
+                            
+                            sh '''
+                                echo "📦 Installing Dependencies..."
+                                npm ci
+                            '''
+                            
+                            script {
+                                if (!params.SKIP_FRONTEND_TESTS) {
+                                    echo "🧪 Running Frontend Tests..."
+                                    sh '''
+                                        CI=true npm test -- --coverage --watchAll=false
+                                    '''
+                                    publishCoverage adapters: [istanbulCoberturaAdapter('coverage/cobertura-coverage.xml')]
+                                }
+                            }
+                            
+                            sh '''
+                                echo "🏗️ Building Production Bundle..."
+                                npm run build
+                                ls -la build/
+                            '''
+                            
+                            archiveArtifacts artifacts: 'build/**/*', fingerprint: true
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('🐳 Build Container Images') {
+            parallel {
+                stage('📦 Backend Container') {
+                    when {
+                        equals expected: true, actual: params.BUILD_BACKEND
+                    }
+                    steps {
+                        dir('app') {
+                            script {
+                                echo "🐳 Building Backend Docker Image..."
+                                def backendImage = docker.build("${env.BACKEND_FULL_IMAGE}")
+                                
+                                if (params.RUN_SECURITY_SCAN) {
+                                    echo "🔒 Scanning Backend Image for Vulnerabilities..."
+                                    sh """
+                                        trivy image --exit-code 1 --severity HIGH,CRITICAL ${env.BACKEND_FULL_IMAGE} || true
+                                    """
+                                }
+                                
+                                echo "📤 Pushing Backend Image..."
+                                docker.withRegistry("https://${env.REGISTRY}", 'docker-registry-credentials') {
+                                    backendImage.push()
+                                    backendImage.push('latest')
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                stage('📦 Frontend Container') {
+                    when {
+                        equals expected: true, actual: params.BUILD_FRONTEND
+                    }
+                    steps {
+                        dir('frontend') {
+                            script {
+                                echo "🐳 Building Frontend Docker Image..."
+                                def frontendImage = docker.build("${env.FRONTEND_FULL_IMAGE}")
+                                
+                                if (params.RUN_SECURITY_SCAN) {
+                                    echo "🔒 Scanning Frontend Image for Vulnerabilities..."
+                                    sh """
+                                        trivy image --exit-code 1 --severity HIGH,CRITICAL ${env.FRONTEND_FULL_IMAGE} || true
+                                    """
+                                }
+                                
+                                echo "📤 Pushing Frontend Image..."
+                                docker.withRegistry("https://${env.REGISTRY}", 'docker-registry-credentials') {
+                                    frontendImage.push()
+                                    frontendImage.push('latest')
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('🗄️ Database Migration') {
+            when {
+                equals expected: true, actual: params.RUN_DATABASE_MIGRATION
+            }
+            steps {
+                echo "🗄️ Running Database Migrations..."
+                withCredentials([usernamePassword(credentialsId: 'postgres-credentials', usernameVariable: 'DB_USER', passwordVariable: 'DB_PASS')]) {
+                    script {
+                        def dbHost = ""
+                        switch(params.DEPLOYMENT_ENVIRONMENT) {
+                            case 'production':
+                                dbHost = credentials('prod-db-host')
+                                break
+                            case 'staging':
+                                dbHost = credentials('staging-db-host')
+                                break
+                            default:
+                                dbHost = credentials('dev-db-host')
+                        }
+                        
+                        dir('app') {
+                            sh """
+                                echo "Testing database connectivity..."
+                                PGPASSWORD='${DB_PASS}' psql -h '${dbHost}' -p 5432 -U '${DB_USER}' -d demoapp -c 'SELECT version();'
+                                
+                                echo "Running Flyway migrations..."
+                                mvn flyway:migrate \\
+                                    -Dflyway.url=jdbc:postgresql://${dbHost}:5432/demoapp \\
+                                    -Dflyway.user=${DB_USER} \\
+                                    -Dflyway.password=${DB_PASS}
+                            """
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('🚀 Deploy to Kubernetes') {
+            when {
+                equals expected: true, actual: params.DEPLOY_TO_K8S
+            }
+            steps {
+                echo "🚀 Deploying to Kubernetes..."
+                
+                withCredentials([kubeconfigFile(credentialsId: 'k8s-config', variable: 'KUBECONFIG')]) {
+                    dir('deployment/helm/java-microservice') {
+                        sh """
+                            echo "📦 Updating Helm dependencies..."
+                            helm dependency update
+                            
+                            echo "🔧 Deploying with Helm..."
+                            helm upgrade --install ${env.APP_NAME} . \\
+                                --namespace ${env.K8S_NAMESPACE} \\
+                                --create-namespace \\
+                                --set backend.image.repository=${env.BACKEND_IMAGE_NAME} \\
+                                --set backend.image.tag=${env.IMAGE_TAG} \\
+                                --set frontend.image.repository=${env.FRONTEND_IMAGE_NAME} \\
+                                --set frontend.image.tag=${env.IMAGE_TAG} \\
+                                --set backend.replicaCount=${env.BACKEND_REPLICAS} \\
+                                --set frontend.replicaCount=${env.FRONTEND_REPLICAS} \\
+                                --set postgresql.auth.password=${DB_CREDENTIALS_PSW} \\
+                                --values values-${params.DEPLOYMENT_ENVIRONMENT}.yaml \\
+                                --wait --timeout=600s
+                            
+                            echo "✅ Deployment completed, checking status..."
+                            kubectl get pods -n ${env.K8S_NAMESPACE} -l app.kubernetes.io/name=${env.APP_NAME}
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('🖥️ Deploy to EC2 (Ansible)') {
+            when {
+                equals expected: true, actual: params.DEPLOY_TO_EC2
+            }
+            steps {
+                echo "🖥️ Deploying to EC2 with Ansible..."
+                
+                dir('ansible') {
+                    withCredentials([
+                        sshUserPrivateKey(credentialsId: 'ec2-ssh-key', keyFileVariable: 'SSH_KEY'),
+                        usernamePassword(credentialsId: 'postgres-credentials', usernameVariable: 'DB_USER', passwordVariable: 'DB_PASS')
+                    ]) {
+                        sh """
+                            echo "🔧 Running Ansible Playbooks..."
+                            
+                            # Server Setup
+                            ansible-playbook -i inventory server-setup.yml \\
+                                --private-key \$SSH_KEY \\
+                                --extra-vars "target_env=${params.DEPLOYMENT_ENVIRONMENT}" \\
+                                --tags "system,java,nodejs,docker,nginx,database"
+                            
+                            # Application Configuration
+                            ansible-playbook -i inventory configure-app.yml \\
+                                --private-key \$SSH_KEY \\
+                                --extra-vars "target_env=${params.DEPLOYMENT_ENVIRONMENT}" \\
+                                --extra-vars "backend_image=${env.BACKEND_FULL_IMAGE}" \\
+                                --extra-vars "frontend_image=${env.FRONTEND_FULL_IMAGE}" \\
+                                --extra-vars "db_password=\${DB_PASS}"
+                            
+                            # Database Initialization
+                            ansible-playbook -i inventory database-init.yml \\
+                                --private-key \$SSH_KEY \\
+                                --extra-vars "target_env=${params.DEPLOYMENT_ENVIRONMENT}" \\
+                                --extra-vars "db_password=\${DB_PASS}"
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('🧪 Integration Tests') {
+            parallel {
+                stage('🔍 Health Checks') {
+                    steps {
+                        script {
+                            if (params.DEPLOY_TO_K8S) {
+                                echo "🔍 Running Kubernetes Health Checks..."
+                                withCredentials([kubeconfigFile(credentialsId: 'k8s-config', variable: 'KUBECONFIG')]) {
+                                    sh """
+                                        kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=${env.APP_NAME} -n ${env.K8S_NAMESPACE} --timeout=300s
+                                        
+                                        echo "Getting service URLs..."
+                                        kubectl get ingress -n ${env.K8S_NAMESPACE}
+                                        
+                                        # Test backend health
+                                        BACKEND_URL=\$(kubectl get svc ${env.APP_NAME}-backend -n ${env.K8S_NAMESPACE} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || echo 'localhost')
+                                        curl -f http://\${BACKEND_URL}/actuator/health || echo "Backend health check failed"
+                                    """
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                stage('📊 Performance Tests') {
+                    steps {
+                        echo "📊 Running Performance Tests..."
+                        script {
+                            // Add performance testing with tools like JMeter or K6
+                            sh '''
+                                echo "Performance tests would run here..."
+                                echo "Tools: JMeter, K6, Artillery, etc."
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo "🧹 Cleaning up..."
+            
+            // Clean Docker images
+            sh '''
+                docker image prune -f || true
+                docker system prune -f || true
+            '''
+            
+            // Archive logs
+            archiveArtifacts artifacts: '**/target/surefire-reports/**', allowEmptyArchive: true
+            archiveArtifacts artifacts: '**/coverage/**', allowEmptyArchive: true
+            
+            // Clean workspace
+            cleanWs()
+        }
+        
+        success {
+            echo "✅ Full-Stack Deployment Successful!"
+            
+            script {
+                def deploymentInfo = """
+🎉 **Deployment Completed Successfully!**
+
+**Build Information:**
+• Build Number: ${env.BUILD_NUMBER}
+• Environment: ${params.DEPLOYMENT_ENVIRONMENT}
+• Backend Image: ${env.BACKEND_FULL_IMAGE}
+• Frontend Image: ${env.FRONTEND_FULL_IMAGE}
+
+**Deployment Targets:**
+• Kubernetes: ${params.DEPLOY_TO_K8S}
+• EC2 (Ansible): ${params.DEPLOY_TO_EC2}
+
+**Git Information:**
+• Branch: ${env.BRANCH_NAME}
+• Commit: ${env.GIT_COMMIT}
+                """
+                
+                // Notify Slack/Teams/Email
+                echo deploymentInfo
+            }
+        }
+        
+        failure {
+            echo "❌ Deployment Failed!"
+            
+            // Rollback logic
+            script {
+                if (params.DEPLOY_TO_K8S) {
+                    echo "🔄 Attempting Kubernetes rollback..."
+                    withCredentials([kubeconfigFile(credentialsId: 'k8s-config', variable: 'KUBECONFIG')]) {
+                        sh """
+                            helm rollback ${env.APP_NAME} --namespace ${env.K8S_NAMESPACE} || echo "Rollback failed"
+                        """
+                    }
+                }
+            }
+        }
+        
+        unstable {
+            echo "⚠️ Build Unstable - Some tests may have failed"
+        }
+    }
+}

@@ -1,0 +1,215 @@
+# Development Environment Configuration
+# Override default values for development environment
+
+app:
+  name: java-microservice
+  version: "dev-2.0.0"
+
+# Backend Configuration for Development
+backend:
+  enabled: true
+  image:
+    tag: "dev-latest"
+    pullPolicy: Always
+  ecr:
+    accountId: "DEVELOPMENT_ACCOUNT_ID"
+    repositoryName: java-microservice-backend-dev
+  deployment:
+    replicaCount: 1
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 0
+        maxSurge: 1
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+  env:
+    SPRING_PROFILES_ACTIVE: development
+    JAVA_OPTS: "-Xmx512m -Xms256m -XX:+UseG1GC -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
+
+# Frontend Configuration for Development
+frontend:
+  enabled: true
+  image:
+    tag: "dev-latest"
+    pullPolicy: Always
+  ecr:
+    accountId: "DEVELOPMENT_ACCOUNT_ID"
+    repositoryName: java-microservice-frontend-dev
+  deployment:
+    replicaCount: 1
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 0
+        maxSurge: 1
+  resources:
+    limits:
+      cpu: 100m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+# Database Configuration for Development
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "dev-postgres"
+    username: "postgres"
+    password: "dev-postgres"
+    database: "demoapp_dev"
+  architecture: standalone
+  primary:
+    persistence:
+      enabled: true
+      size: 2Gi
+      storageClass: "gp3"
+    resources:
+      limits:
+        cpu: 250m
+        memory: 256Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+# Redis Configuration for Development
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+  master:
+    persistence:
+      enabled: true
+      size: 1Gi
+      storageClass: "gp3"
+    resources:
+      limits:
+        cpu: 100m
+        memory: 128Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi
+
+# HPA Configuration for Development (relaxed)
+hpa:
+  backend:
+    enabled: false  # Disabled for development
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 80
+  frontend:
+    enabled: false  # Disabled for development
+    minReplicas: 1
+    maxReplicas: 2
+    targetCPUUtilizationPercentage: 80
+
+# Pod Disruption Budget for Development (relaxed)
+podDisruptionBudget:
+  backend:
+    enabled: false  # Disabled for development
+  frontend:
+    enabled: false  # Disabled for development
+
+# Ingress Configuration for Development
+ingress:
+  enabled: true
+  className: "alb"
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /actuator/health
+  hosts:
+    - host: java-microservice-dev.internal.com
+      paths:
+        - path: /api
+          pathType: Prefix
+          backend:
+            service:
+              name: backend
+              port:
+                number: 80
+        - path: /actuator
+          pathType: Prefix
+          backend:
+            service:
+              name: backend
+              port:
+                number: 80
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: frontend
+              port:
+                number: 80
+
+# ConfigMap with development-specific configuration
+configMap:
+  data:
+    application.yml: |
+      spring:
+        application:
+          name: java-microservice
+        profiles:
+          active: development
+        datasource:
+          url: jdbc:postgresql://java-microservice-postgresql:5432/demoapp_dev
+          username: postgres
+          password: dev-postgres
+          driver-class-name: org.postgresql.Driver
+        jpa:
+          hibernate:
+            ddl-auto: create-drop
+          show-sql: true
+          properties:
+            hibernate:
+              dialect: org.hibernate.dialect.PostgreSQLDialect
+              format_sql: true
+        flyway:
+          enabled: false  # Disabled for development, using create-drop
+        redis:
+          host: java-microservice-redis-master
+          port: 6379
+      server:
+        port: 8080
+      management:
+        endpoints:
+          web:
+            exposure:
+              include: health,info,prometheus,metrics,loggers,env
+        endpoint:
+          health:
+            show-details: always
+      logging:
+        level:
+          com.example: DEBUG
+          org.springframework.web: DEBUG
+          org.hibernate.SQL: DEBUG
+          org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+
+# Relaxed resource quotas for development
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+
+# Development-specific node selection (use smaller instances)
+nodeSelector:
+  kubernetes.io/os: linux
+  node.kubernetes.io/instance-type: "t3.small"
+
+# Monitoring disabled for development to save resources
+monitoring:
+  enabled: false

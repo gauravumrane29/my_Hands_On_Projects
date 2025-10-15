@@ -1,0 +1,885 @@
+pipeline {
+    agent {
+        label 'docker-maven-node'  // Use Jenkins agent with Docker, Maven, and Node.js
+    }
+    
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 60, unit: 'MINUTES')
+        retry(2)
+        skipStagesAfterUnstable()
+        timestamps()
+        ansiColor('xterm')
+        parallelsAlwaysFailFast()
+    }
+    
+    environment {
+        // Application Configuration
+        APP_NAME = 'java-microservice'
+        JAVA_VERSION = '17'
+        NODE_VERSION = '18'
+        MAVEN_OPTS = '-Dmaven.repo.local=.m2/repository -Xmx1024m -XX:MaxPermSize=512m'
+        
+        // Container Registry Configuration
+        REGISTRY = credentials('docker-registry-url')  // e.g., 'your-account.dkr.ecr.us-east-1.amazonaws.com'
+        BACKEND_IMAGE_NAME = "${REGISTRY}/java-microservice-backend"
+        FRONTEND_IMAGE_NAME = "${REGISTRY}/java-microservice-frontend"
+        
+        // AWS Configuration
+        AWS_DEFAULT_REGION = 'us-east-1'
+        AWS_CREDENTIALS = credentials('aws-credentials')
+        
+        // Database Configuration
+        DB_CREDENTIALS = credentials('postgres-credentials')
+        
+        // Quality Gates
+        SONAR_PROJECT_KEY = "${env.JOB_NAME.replaceAll('/', '_')}"
+        SONAR_TOKEN = credentials('sonar-token')
+        
+        // Version Information
+        BUILD_VERSION = "${env.BUILD_NUMBER}"
+        GIT_SHORT_COMMIT = "${env.GIT_COMMIT?.take(8) ?: 'unknown'}"
+        
+        // Security Scanning
+        TRIVY_CACHE_DIR = "${WORKSPACE}/.trivy-cache"
+    }
+    
+    parameters {
+        choice(
+            name: 'DEPLOYMENT_ENVIRONMENT',
+            choices: ['development', 'staging', 'production'],
+            description: 'Target deployment environment'
+        )
+        booleanParam(
+            name: 'SKIP_BACKEND_TESTS',
+            defaultValue: false,
+            description: 'Skip backend tests (not recommended for production)'
+        )
+        booleanParam(
+            name: 'SKIP_FRONTEND_TESTS',
+            defaultValue: false,
+            description: 'Skip frontend tests (not recommended for production)'
+        )
+        booleanParam(
+            name: 'RUN_DATABASE_MIGRATION',
+            defaultValue: true,
+            description: 'Run database migrations during deployment'
+        )
+        booleanParam(
+            name: 'DEPLOY_TO_K8S',
+            defaultValue: true,
+            description: 'Deploy to Kubernetes cluster'
+        )
+        booleanParam(
+            name: 'DEPLOY_TO_EC2',
+            defaultValue: false,
+            description: 'Deploy to EC2 instances via Ansible'
+        )
+        booleanParam(
+            name: 'RUN_SECURITY_SCAN',
+            defaultValue: true,
+            description: 'Run security vulnerability scans'
+        )
+        booleanParam(
+            name: 'BUILD_FRONTEND',
+            defaultValue: true,
+            description: 'Build React frontend application'
+        )
+        booleanParam(
+            name: 'BUILD_BACKEND',
+            defaultValue: true,
+            description: 'Build Spring Boot backend application'
+        )
+        string(
+            name: 'CUSTOM_TAG',
+            defaultValue: '',
+            description: 'Custom tag for container images (optional)'
+        )
+    }
+    
+    stages {
+        stage('🔍 Environment Setup') {
+            steps {
+                script {
+                    // Calculate build tag
+                    if (params.CUSTOM_TAG) {
+                        env.IMAGE_TAG = params.CUSTOM_TAG
+                    } else if (env.BRANCH_NAME == 'main') {
+                        env.IMAGE_TAG = "v${env.BUILD_VERSION}-${env.GIT_SHORT_COMMIT}"
+                    } else {
+                        env.IMAGE_TAG = "${env.BRANCH_NAME}-${env.BUILD_VERSION}-${env.GIT_SHORT_COMMIT}"
+                    }
+                    
+                    // Environment-specific configuration
+                    switch(params.DEPLOYMENT_ENVIRONMENT) {
+                        case 'production':
+                            env.K8S_NAMESPACE = 'production'
+                            env.BACKEND_REPLICAS = '3'
+                            env.FRONTEND_REPLICAS = '2'
+                            env.BACKEND_RESOURCE_LIMITS = 'cpu=2000m,memory=4Gi'
+                            env.BACKEND_RESOURCE_REQUESTS = 'cpu=1000m,memory=2Gi'
+                            env.FRONTEND_RESOURCE_LIMITS = 'cpu=500m,memory=1Gi'
+                            env.FRONTEND_RESOURCE_REQUESTS = 'cpu=250m,memory=512Mi'
+                            env.DATABASE_POOL_SIZE = '20'
+                            break
+                        case 'staging':
+                            env.K8S_NAMESPACE = 'staging'
+                            env.BACKEND_REPLICAS = '2'
+                            env.FRONTEND_REPLICAS = '2'
+                            env.BACKEND_RESOURCE_LIMITS = 'cpu=1000m,memory=2Gi'
+                            env.BACKEND_RESOURCE_REQUESTS = 'cpu=500m,memory=1Gi'
+                            env.FRONTEND_RESOURCE_LIMITS = 'cpu=250m,memory=512Mi'
+                            env.FRONTEND_RESOURCE_REQUESTS = 'cpu=125m,memory=256Mi'
+                            env.DATABASE_POOL_SIZE = '10'
+                            break
+                        default: // development
+                            env.K8S_NAMESPACE = 'development'
+                            env.BACKEND_REPLICAS = '1'
+                            env.FRONTEND_REPLICAS = '1'
+                            env.BACKEND_RESOURCE_LIMITS = 'cpu=500m,memory=1Gi'
+                            env.BACKEND_RESOURCE_REQUESTS = 'cpu=250m,memory=512Mi'
+                            env.FRONTEND_RESOURCE_LIMITS = 'cpu=200m,memory=256Mi'
+                            env.FRONTEND_RESOURCE_REQUESTS = 'cpu=100m,memory=128Mi'
+                            env.DATABASE_POOL_SIZE = '5'
+                    }
+                    
+                    // Set full image names with tags
+                    env.BACKEND_FULL_IMAGE = "${env.BACKEND_IMAGE_NAME}:${env.IMAGE_TAG}"
+                    env.FRONTEND_FULL_IMAGE = "${env.FRONTEND_IMAGE_NAME}:${env.IMAGE_TAG}"
+                }
+                
+                echo "🏗️ Full-Stack Build Configuration:"
+                echo "  • Application: ${env.APP_NAME}"
+                echo "  • Backend Image: ${env.BACKEND_FULL_IMAGE}"
+                echo "  • Frontend Image: ${env.FRONTEND_FULL_IMAGE}"
+                echo "  • Environment: ${params.DEPLOYMENT_ENVIRONMENT}"
+                echo "  • Namespace: ${env.K8S_NAMESPACE}"
+                echo "  • Branch: ${env.BRANCH_NAME}"
+                echo "  • Build Frontend: ${params.BUILD_FRONTEND}"
+                echo "  • Build Backend: ${params.BUILD_BACKEND}"
+                echo "  • Deploy to K8s: ${params.DEPLOY_TO_K8S}"
+                echo "  • Deploy to EC2: ${params.DEPLOY_TO_EC2}"
+                
+                // Clean workspace but preserve cache directories
+                sh '''
+                    find . -name "node_modules" -type d -exec rm -rf {} + 2>/dev/null || true
+                    find . -name "target" -type d -exec rm -rf {} + 2>/dev/null || true
+                    mkdir -p .m2/repository
+                    mkdir -p frontend/node_modules
+                '''
+            }
+        }
+        
+        stage('📥 Checkout & Setup') {
+            steps {
+                checkout scm
+                
+                script {
+                    // Get additional Git information
+                    env.GIT_COMMIT = sh(
+                        script: 'git rev-parse HEAD',
+                        returnStdout: true
+                    ).trim()
+                    
+                    env.GIT_BRANCH = sh(
+                        script: 'git rev-parse --abbrev-ref HEAD',
+                        returnStdout: true
+                    ).trim()
+                    
+                    env.GIT_MESSAGE = sh(
+                        script: 'git log -1 --pretty=%B',
+                        returnStdout: true
+                    ).trim()
+                    
+                    // Update GIT_SHORT_COMMIT with actual value
+                    env.GIT_SHORT_COMMIT = env.GIT_COMMIT.take(8)
+                    
+                    // Recalculate image tag with correct commit hash
+                    if (params.CUSTOM_TAG) {
+                        env.IMAGE_TAG = params.CUSTOM_TAG
+                    } else if (env.BRANCH_NAME == 'main') {
+                        env.IMAGE_TAG = "v${env.BUILD_VERSION}-${env.GIT_SHORT_COMMIT}"
+                    } else {
+                        env.IMAGE_TAG = "${env.BRANCH_NAME}-${env.BUILD_VERSION}-${env.GIT_SHORT_COMMIT}"
+                    }
+                    
+                    env.BACKEND_FULL_IMAGE = "${env.BACKEND_IMAGE_NAME}:${env.IMAGE_TAG}"
+                    env.FRONTEND_FULL_IMAGE = "${env.FRONTEND_IMAGE_NAME}:${env.IMAGE_TAG}"
+                }
+                
+                // Check project structure
+                sh '''
+                    echo "📁 Project Structure:"
+                    ls -la
+                    echo ""
+                    echo "📁 App Directory:"
+                    ls -la app/ || echo "No app directory found"
+                    echo ""
+                    echo "� Frontend Directory:"
+                    ls -la frontend/ || echo "No frontend directory found"
+                '''
+                
+                echo "�📋 Updated Git Information:"
+                echo "  • Branch: ${env.GIT_BRANCH}"
+                echo "  • Commit: ${env.GIT_COMMIT}"
+                echo "  • Short Commit: ${env.GIT_SHORT_COMMIT}"
+                echo "  • Final Tag: ${env.IMAGE_TAG}"
+                echo "  • Message: ${env.GIT_MESSAGE}"
+            }
+        }
+        
+        stage('🏗️ Build & Test Applications') {
+            parallel {
+                stage('☕ Backend Build') {
+                    when {
+                        equals expected: true, actual: params.BUILD_BACKEND
+                    }
+                    steps {
+                        dir('app') {
+                            echo "� Building Spring Boot Backend..."
+                            
+                            // Maven build with tests
+                            sh '''
+                                echo "📦 Installing Maven dependencies..."
+                                mvn clean compile -DskipTests=true
+                                
+                                echo "📋 Maven project information:"
+                                mvn help:evaluate -Dexpression=project.version -q -DforceStdout
+                            '''
+                            
+                            script {
+                                if (!params.SKIP_BACKEND_TESTS) {
+                                    echo "🧪 Running Backend Tests..."
+                                    sh '''
+                                        mvn test
+                                        echo "✅ Backend tests completed"
+                                    '''
+                                    
+                                    // Publish test results
+                                    publishTestResults testResultsPattern: 'target/surefire-reports/*.xml'
+                                    
+                                    // JaCoCo Code Coverage
+                                    sh 'mvn jacoco:report'
+                                    publishCoverage adapters: [jacocoAdapter('target/site/jacoco/jacoco.xml')], sourceFileResolver: sourceFiles('STORE_LAST_BUILD')
+                                } else {
+                                    echo "⚠️ Backend tests skipped"
+                                }
+                            }
+                            
+                            // Package application
+                            sh '''
+                                echo "📦 Packaging Backend Application..."
+                                mvn package -DskipTests=true
+                                
+                                echo "✅ Backend build artifacts:"
+                                ls -la target/*.jar || echo "No JAR files found"
+                            '''
+                            
+                            // Archive artifacts
+                            archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                        }
+                    }
+                    post {
+                        always {
+                            dir('app') {
+                                sh 'mvn clean || true'
+                            }
+                        }
+                    }
+                }
+                
+                stage('⚛️ Frontend Build') {
+                    when {
+                        equals expected: true, actual: params.BUILD_FRONTEND
+                    }
+                    steps {
+                        dir('frontend') {
+                            echo "🔧 Building React Frontend..."
+                            
+                            // Install dependencies
+                            sh '''
+                                echo "📦 Installing Node.js dependencies..."
+                                npm ci
+                                
+                                echo "📋 Node.js project information:"
+                                npm list --depth=0 || true
+                            '''
+                            
+                            script {
+                                if (!params.SKIP_FRONTEND_TESTS) {
+                                    echo "🧪 Running Frontend Tests..."
+                                    sh '''
+                                        echo "Running React tests..."
+                                        CI=true npm test -- --coverage --watchAll=false
+                                        echo "✅ Frontend tests completed"
+                                    '''
+                                    
+                                    // Publish test results (if using Jest with junit reporter)
+                                    // publishTestResults testResultsPattern: 'coverage/junit.xml'
+                                    
+                                    // Publish coverage reports
+                                    publishCoverage adapters: [istanbulCoberturaAdapter('coverage/cobertura-coverage.xml')], sourceFileResolver: sourceFiles('STORE_LAST_BUILD')
+                                } else {
+                                    echo "⚠️ Frontend tests skipped"
+                                }
+                            }
+                            
+                            // Build for production
+                            sh '''
+                                echo "🏗️ Building React Production Bundle..."
+                                npm run build
+                                
+                                echo "✅ Frontend build artifacts:"
+                                ls -la build/ || echo "No build directory found"
+                            '''
+                            
+                            // Archive build artifacts
+                            archiveArtifacts artifacts: 'build/**/*', fingerprint: true
+                        }
+                    }
+                    post {
+                        always {
+                            dir('frontend') {
+                                sh 'npm cache clean --force || true'
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('�🔍 Code Quality Analysis') {
+            parallel {
+                stage('📊 Backend SonarQube Analysis') {
+                    when {
+                        allOf {
+                            equals expected: true, actual: params.BUILD_BACKEND
+                            anyOf {
+                                branch 'main'
+                                branch 'develop'
+                            changeRequest()
+                        }
+                    }
+                    steps {
+                        dir('app') {
+                            withSonarQubeEnv('SonarQube') {
+                                sh """
+                                    mvn clean verify sonar:sonar \\
+                                        -Dsonar.projectKey=${env.SONAR_PROJECT_KEY} \\
+                                        -Dsonar.projectName='${env.APP_NAME}' \\
+                                        -Dsonar.branch.name=${env.GIT_BRANCH} \\
+                                        -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \\
+                                        -Dsonar.java.source=${env.JAVA_VERSION}
+                                """
+                            }
+                        }
+                    }
+                    post {
+                        always {
+                            publishHTML([
+                                allowMissing: false,
+                                alwaysLinkToLastBuild: true,
+                                keepAll: true,
+                                reportDir: 'app/target/site/jacoco',
+                                reportFiles: 'index.html',
+                                reportName: 'Code Coverage Report'
+                            ])
+                        }
+                    }
+                }
+                
+                stage('🛡️ Security Scan - Dependencies') {
+                    when {
+                        expression { params.RUN_SECURITY_SCAN }
+                    }
+                    steps {
+                        dir('app') {
+                            script {
+                                try {
+                                    // OWASP Dependency Check
+                                    sh """
+                                        mvn org.owasp:dependency-check-maven:check \\
+                                            -DfailBuildOnCVSS=7 \\
+                                            -Dformat=ALL \\
+                                            -DprettyPrint=true
+                                    """
+                                } catch (Exception e) {
+                                    echo "⚠️ OWASP Dependency Check found vulnerabilities: ${e.message}"
+                                    currentBuild.result = 'UNSTABLE'
+                                }
+                            }
+                        }
+                    }
+                    post {
+                        always {
+                            publishHTML([
+                                allowMissing: true,
+                                alwaysLinkToLastBuild: true,
+                                keepAll: true,
+                                reportDir: 'app/target',
+                                reportFiles: 'dependency-check-report.html',
+                                reportName: 'OWASP Dependency Check Report'
+                            ])
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('🏗️ Build & Test') {
+            parallel {
+                stage('📦 Maven Build') {
+                    steps {
+                        dir('app') {
+                            sh """
+                                echo "🔧 Maven Build Information:"
+                                mvn --version
+                                java -version
+                                
+                                echo "🏗️ Building application..."
+                                mvn clean compile -B -V \\
+                                    -Dmaven.test.skip=true \\
+                                    -Dmaven.javadoc.skip=true
+                            """
+                        }
+                    }
+                }
+                
+                stage('🧪 Unit Tests') {
+                    when {
+                        not { params.SKIP_TESTS }
+                    }
+                    steps {
+                        dir('app') {
+                            sh """
+                                echo "🧪 Running unit tests..."
+                                mvn test -B \\
+                                    -Dmaven.test.failure.ignore=true \\
+                                    -Djacoco.destFile=target/jacoco.exec
+                            """
+                        }
+                    }
+                    post {
+                        always {
+                            publishTestResults testResultsPattern: 'app/target/surefire-reports/*.xml'
+                            
+                            script {
+                                if (fileExists('app/target/site/jacoco/jacoco.xml')) {
+                                    step([$class: 'JacocoPublisher',
+                                          execPattern: 'app/target/jacoco.exec',
+                                          classPattern: 'app/target/classes',
+                                          sourcePattern: 'app/src/main/java'
+                                    ])
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                stage('🧪 Integration Tests') {
+                    when {
+                        allOf {
+                            not { params.SKIP_TESTS }
+                            anyOf {
+                                branch 'main'
+                                branch 'develop'
+                                expression { params.DEPLOYMENT_ENVIRONMENT == 'staging' }
+                            }
+                        }
+                    }
+                    steps {
+                        dir('app') {
+                            sh """
+                                echo "🧪 Running integration tests..."
+                                mvn verify -B \\
+                                    -Dskip.unit.tests=true \\
+                                    -Dmaven.test.failure.ignore=true
+                            """
+                        }
+                    }
+                    post {
+                        always {
+                            publishTestResults testResultsPattern: 'app/target/failsafe-reports/*.xml'
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('📦 Package Application') {
+            steps {
+                dir('app') {
+                    sh """
+                        echo "📦 Packaging application..."
+                        mvn package -B \\
+                            -DskipTests=true \\
+                            -Dmaven.javadoc.skip=true
+                    """
+                    
+                    // Archive artifacts
+                    archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                    
+                    // Store build information
+                    sh """
+                        echo "Creating build information..."
+                        cat > target/BUILD_INFO.txt << EOF
+BUILD_NUMBER=${env.BUILD_NUMBER}
+BUILD_TAG=${env.IMAGE_TAG}
+GIT_COMMIT=${env.GIT_COMMIT}
+GIT_BRANCH=${env.GIT_BRANCH}
+BUILD_DATE=\$(date -u)
+JAVA_VERSION=${env.JAVA_VERSION}
+DEPLOYMENT_ENV=${params.DEPLOYMENT_ENVIRONMENT}
+EOF
+                    """
+                    
+                    archiveArtifacts artifacts: 'target/BUILD_INFO.txt', fingerprint: true
+                }
+            }
+        }
+        
+        stage('🐳 Container Build') {
+            steps {
+                script {
+                    dir('app') {
+                        // Build container image
+                        def dockerImage = docker.build(
+                            "${env.IMAGE_NAME}:${env.IMAGE_TAG}",
+                            "--build-arg VERSION=${env.IMAGE_TAG} " +
+                            "--build-arg BUILD_DATE=\$(date -u +'%Y-%m-%dT%H:%M:%SZ') " +
+                            "--build-arg VCS_REF=${env.GIT_COMMIT} " +
+                            "."
+                        )
+                        
+                        env.DOCKER_IMAGE_ID = dockerImage.id
+                        
+                        echo "🐳 Built container image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
+                        echo "🆔 Image ID: ${env.DOCKER_IMAGE_ID}"
+                    }
+                }
+            }
+        }
+        
+        stage('🛡️ Container Security Scan') {
+            when {
+                expression { params.RUN_SECURITY_SCAN }
+            }
+            parallel {
+                stage('🔍 Trivy Vulnerability Scan') {
+                    steps {
+                        script {
+                            try {
+                                sh """
+                                    # Install Trivy if not present
+                                    if ! command -v trivy &> /dev/null; then
+                                        echo "Installing Trivy..."
+                                        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+                                        echo deb https://aquasecurity.github.io/trivy-repo/deb generic main | sudo tee -a /etc/apt/sources.list
+                                        sudo apt-get update
+                                        sudo apt-get install -y trivy
+                                    fi
+                                    
+                                    # Create cache directory
+                                    mkdir -p ${env.TRIVY_CACHE_DIR}
+                                    
+                                    echo "🔍 Running Trivy vulnerability scan..."
+                                    trivy image --cache-dir ${env.TRIVY_CACHE_DIR} \\
+                                        --format table \\
+                                        --severity HIGH,CRITICAL \\
+                                        --no-progress \\
+                                        ${env.IMAGE_NAME}:${env.IMAGE_TAG} || true
+                                    
+                                    # Generate JSON report
+                                    trivy image --cache-dir ${env.TRIVY_CACHE_DIR} \\
+                                        --format json \\
+                                        --output trivy-report.json \\
+                                        ${env.IMAGE_NAME}:${env.IMAGE_TAG} || true
+                                """
+                                
+                                archiveArtifacts artifacts: 'trivy-report.json', allowEmptyArchive: true
+                                
+                            } catch (Exception e) {
+                                echo "⚠️ Trivy scan failed: ${e.message}"
+                                currentBuild.result = 'UNSTABLE'
+                            }
+                        }
+                    }
+                }
+                
+                stage('🔍 Container Lint') {
+                    steps {
+                        dir('app') {
+                            script {
+                                try {
+                                    sh """
+                                        echo "🔍 Running Dockerfile lint with hadolint..."
+                                        if command -v hadolint &> /dev/null; then
+                                            hadolint Dockerfile || true
+                                        else
+                                            echo "⚠️ hadolint not installed, skipping Dockerfile lint"
+                                        fi
+                                    """
+                                } catch (Exception e) {
+                                    echo "⚠️ Dockerfile lint failed: ${e.message}"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('📤 Push Container Image') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'develop'
+                    expression { params.DEPLOYMENT_ENVIRONMENT != 'development' }
+                }
+            }
+            steps {
+                script {
+                    docker.withRegistry("https://${env.REGISTRY}", 'github-container-registry') {
+                        def dockerImage = docker.image("${env.IMAGE_NAME}:${env.IMAGE_TAG}")
+                        
+                        // Push with specific tag
+                        dockerImage.push(env.IMAGE_TAG)
+                        
+                        // Push additional tags based on branch
+                        if (env.BRANCH_NAME == 'main') {
+                            dockerImage.push('latest')
+                            dockerImage.push("v${env.BUILD_VERSION}")
+                        } else if (env.BRANCH_NAME == 'develop') {
+                            dockerImage.push('develop')
+                        }
+                        
+                        echo "📤 Pushed container image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
+                    }
+                }
+            }
+        }
+        
+        stage('🏗️ Infrastructure Validation') {
+            when {
+                anyOf {
+                    changeset 'terraform/**'
+                    changeset 'packer/**'
+                    expression { params.DEPLOYMENT_ENVIRONMENT == 'production' }
+                }
+            }
+            parallel {
+                stage('🔍 Terraform Validation') {
+                    steps {
+                        dir('terraform') {
+                            withCredentials([
+                                aws(credentialsId: 'aws-credentials', 
+                                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY')
+                            ]) {
+                                sh """
+                                    echo "🔍 Validating Terraform configuration..."
+                                    terraform init -backend=false
+                                    terraform validate
+                                    terraform fmt -check=true -recursive
+                                """
+                            }
+                        }
+                    }
+                }
+                
+                stage('🔍 Packer Validation') {
+                    steps {
+                        dir('packer') {
+                            sh """
+                                echo "🔍 Validating Packer configuration..."
+                                packer validate -var-file="variables.pkrvars.hcl" app_ami.pkr.hcl
+                            """
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('🚀 Deploy to Kubernetes') {
+            when {
+                expression { params.DEPLOY_TO_K8S }
+            }
+            steps {
+                script {
+                    // Deployment approval for production
+                    if (params.DEPLOYMENT_ENVIRONMENT == 'production') {
+                        timeout(time: 10, unit: 'MINUTES') {
+                            input message: "Deploy to production?", 
+                                  ok: "Deploy",
+                                  submitterParameter: 'APPROVER'
+                        }
+                        echo "🎯 Production deployment approved by: ${env.APPROVER}"
+                    }
+                    
+                    withCredentials([
+                        kubeconfigFile(credentialsId: "k8s-${params.DEPLOYMENT_ENVIRONMENT}", 
+                                      variable: 'KUBECONFIG')
+                    ]) {
+                        sh """
+                            echo "🚀 Deploying to ${params.DEPLOYMENT_ENVIRONMENT} environment..."
+                            
+                            # Ensure namespace exists
+                            kubectl create namespace ${env.K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                            
+                            # Deploy using Helm
+                            helm upgrade --install ${env.APP_NAME} ./deployment/helm/${env.APP_NAME} \\
+                                --namespace ${env.K8S_NAMESPACE} \\
+                                --set image.repository=${env.IMAGE_NAME} \\
+                                --set image.tag=${env.IMAGE_TAG} \\
+                                --set environment=${params.DEPLOYMENT_ENVIRONMENT} \\
+                                --set replicaCount=${env.REPLICAS} \\
+                                --set resources.limits.cpu=\$(echo ${env.RESOURCE_LIMITS} | cut -d',' -f1 | cut -d'=' -f2) \\
+                                --set resources.limits.memory=\$(echo ${env.RESOURCE_LIMITS} | cut -d',' -f2 | cut -d'=' -f2) \\
+                                --set resources.requests.cpu=\$(echo ${env.RESOURCE_REQUESTS} | cut -d',' -f1 | cut -d'=' -f2) \\
+                                --set resources.requests.memory=\$(echo ${env.RESOURCE_REQUESTS} | cut -d',' -f2 | cut -d'=' -f2) \\
+                                --wait --timeout=10m
+                        """
+                    }
+                }
+            }
+            post {
+                success {
+                    echo "✅ Deployment to ${params.DEPLOYMENT_ENVIRONMENT} successful!"
+                }
+                failure {
+                    echo "❌ Deployment to ${params.DEPLOYMENT_ENVIRONMENT} failed!"
+                }
+            }
+        }
+        
+        stage('🧪 Post-Deployment Tests') {
+            when {
+                expression { params.DEPLOY_TO_K8S }
+            }
+            steps {
+                withCredentials([
+                    kubeconfigFile(credentialsId: "k8s-${params.DEPLOYMENT_ENVIRONMENT}", 
+                                  variable: 'KUBECONFIG')
+                ]) {
+                    sh """
+                        echo "🧪 Running post-deployment health checks..."
+                        
+                        # Wait for deployment to be ready
+                        kubectl wait --for=condition=available --timeout=300s \\
+                            deployment/${env.APP_NAME} -n ${env.K8S_NAMESPACE}
+                        
+                        # Check pod status
+                        kubectl get pods -n ${env.K8S_NAMESPACE} -l app=${env.APP_NAME}
+                        
+                        # Run health check
+                        kubectl run health-check-${env.BUILD_NUMBER} \\
+                            --image=curlimages/curl \\
+                            --rm -i --restart=Never \\
+                            --namespace=${env.K8S_NAMESPACE} \\
+                            -- curl -f http://${env.APP_NAME}.${env.K8S_NAMESPACE}.svc.cluster.local:8080/actuator/health
+                    """
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            // Clean up Docker images
+            script {
+                try {
+                    sh """
+                        echo "🧹 Cleaning up Docker images..."
+                        docker rmi ${env.IMAGE_NAME}:${env.IMAGE_TAG} || true
+                        docker system prune -f || true
+                    """
+                } catch (Exception e) {
+                    echo "Warning: Docker cleanup failed: ${e.message}"
+                }
+            }
+            
+            // Publish build information
+            script {
+                def buildInfo = [
+                    buildNumber: env.BUILD_NUMBER,
+                    buildTag: env.IMAGE_TAG,
+                    gitCommit: env.GIT_COMMIT,
+                    gitBranch: env.GIT_BRANCH,
+                    environment: params.DEPLOYMENT_ENVIRONMENT,
+                    timestamp: new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'"),
+                    status: currentBuild.result ?: 'SUCCESS'
+                ]
+                
+                writeJSON file: 'build-info.json', json: buildInfo
+                archiveArtifacts artifacts: 'build-info.json', fingerprint: true
+            }
+        }
+        
+        success {
+            echo """
+🎉 =====================================================
+✅ BUILD SUCCESS!
+🏗️  Application: ${env.APP_NAME}
+🏷️  Version: ${env.IMAGE_TAG}
+🌍 Environment: ${params.DEPLOYMENT_ENVIRONMENT}
+🐳 Container: ${env.IMAGE_NAME}:${env.IMAGE_TAG}
+⏰ Duration: ${currentBuild.durationString}
+=====================================================
+            """
+            
+            // Send success notification
+            script {
+                if (params.DEPLOYMENT_ENVIRONMENT == 'production') {
+                    // Send production deployment notification
+                    emailext (
+                        subject: "✅ Production Deployment Success: ${env.APP_NAME} v${env.IMAGE_TAG}",
+                        body: """
+Production deployment completed successfully!
+
+Application: ${env.APP_NAME}
+Version: ${env.IMAGE_TAG}
+Environment: ${params.DEPLOYMENT_ENVIRONMENT}
+Build: ${env.BUILD_URL}
+Approved by: ${env.APPROVER ?: 'N/A'}
+
+The application is now live in production.
+                        """,
+                        to: "${env.PRODUCTION_NOTIFICATION_EMAILS ?: 'devops@company.com'}"
+                    )
+                }
+            }
+        }
+        
+        failure {
+            echo """
+❌ =====================================================
+💥 BUILD FAILED!
+🏗️  Application: ${env.APP_NAME}
+🌍 Environment: ${params.DEPLOYMENT_ENVIRONMENT}
+⏰ Duration: ${currentBuild.durationString}
+🔗 Build URL: ${env.BUILD_URL}
+=====================================================
+            """
+            
+            // Send failure notification
+            emailext (
+                subject: "❌ Build Failed: ${env.APP_NAME} - ${env.BRANCH_NAME}",
+                body: """
+Build failed for ${env.APP_NAME}
+
+Branch: ${env.BRANCH_NAME}
+Commit: ${env.GIT_COMMIT}
+Environment: ${params.DEPLOYMENT_ENVIRONMENT}
+Build URL: ${env.BUILD_URL}
+
+Please check the build logs for details.
+                """,
+                to: "${env.FAILURE_NOTIFICATION_EMAILS ?: 'devops@company.com'}"
+            )
+        }
+        
+        unstable {
+            echo "⚠️ Build completed with warnings - please review the logs"
+        }
+    }
+}
