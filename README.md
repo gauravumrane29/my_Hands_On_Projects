@@ -46,6 +46,44 @@ Full-stack observability with Prometheus service discovery, comprehensive Grafan
 ### ✅ **Deployment Configuration & Debug Documentation**
 Cleaned up deployment templates, resolved port conflicts, validated multi-environment Helm charts, and created comprehensive debug documentation for future troubleshooting.
 
-## 📚 Debug & Reference Documentation
+## � Getting Started - Deploy Your Application
 
-- **[Copilot Session Debug Commands](docs/copilot-session-debug-commands.md)** - Complete reference of all commands used during the transformation with troubleshooting guides
+### Quick Start Options
+
+1. **[Quick Start Guide](QUICK_START.md)** - Deploy in 30 minutes (recommended for first-time users)
+2. **[Complete Deployment Guide](DEPLOYMENT_GUIDE.md)** - Comprehensive step-by-step instructions
+3. **[Architecture Overview](ARCHITECTURE.md)** - Understand the complete system design
+
+### Choose Your Deployment Path
+
+| Deployment Type | Time Required | Use Case | Guide Link |
+|----------------|---------------|----------|------------|
+| **Local Docker** | 5 minutes | Development & Testing | [Quick Start](QUICK_START.md#-option-1-local-docker-5-minutes) |
+| **AWS Production** | 30 minutes | Production Deployment | [Quick Start](QUICK_START.md#️-option-2-aws-production-30-minutes) |
+| **Development Setup** | 3 minutes | Local Development | [Quick Start](QUICK_START.md#-option-3-development-environment-3-minutes) |
+| **Complete AWS Setup** | 2-3 hours | Enterprise Production | [Deployment Guide](DEPLOYMENT_GUIDE.md) |
+
+### Prerequisites
+
+**For Local Development:**
+- Docker & Docker Compose
+- 8GB RAM available
+
+**For AWS Deployment:**
+- AWS Account with billing enabled
+- AWS CLI configured
+- Terraform, kubectl, helm installed
+
+See [Deployment Guide - Prerequisites](DEPLOYMENT_GUIDE.md#prerequisites) for detailed setup instructions.
+
+## 📚 Documentation & Resources
+
+### Deployment Documentation
+- **[QUICK_START.md](QUICK_START.md)** - Fast track deployment (30 minutes)
+- **[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)** - Complete deployment instructions with troubleshooting
+- **[DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md)** - Comprehensive verification checklist for each deployment stage
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture and design decisions
+- **[FULL_STACK_TRANSFORMATION_SUMMARY.md](FULL_STACK_TRANSFORMATION_SUMMARY.md)** - Project transformation overview
+
+### Technical Documentation
+- **[Copilot Session Debug Commands](docs/copilot-session-debug-commands.md)** - Complete troubleshooting reference
