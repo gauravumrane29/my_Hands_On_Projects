@@ -94,14 +94,14 @@ graph TB
     Frontend -.->|Logs| CloudWatch
     Prometheus -.->|Data Source| Grafana
     
-    style Users fill:#e1f5ff
-    style ALB fill:#ff9999
-    style Backend fill:#99ccff
-    style Frontend fill:#ffcc99
-    style RDS fill:#99ff99
-    style ElastiCache fill:#ffff99
-    style Prometheus fill:#ff99ff
-    style Grafana fill:#99ffff
+    style Users fill:#1e40af,stroke:#1e3a8a,stroke-width:2px,color:#fff
+    style ALB fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#fff
+    style Backend fill:#1e3a8a,stroke:#1e293b,stroke-width:2px,color:#fff
+    style Frontend fill:#c2410c,stroke:#9a3412,stroke-width:2px,color:#fff
+    style RDS fill:#15803d,stroke:#166534,stroke-width:2px,color:#fff
+    style ElastiCache fill:#ca8a04,stroke:#a16207,stroke-width:2px,color:#fff
+    style Prometheus fill:#7e22ce,stroke:#6b21a8,stroke-width:2px,color:#fff
+    style Grafana fill:#0e7490,stroke:#155e75,stroke-width:2px,color:#fff
 ```
 
 **Purpose**: This diagram shows the complete request flow from users through DNS, load balancing, Kubernetes services, application pods, and data storage.
@@ -173,9 +173,9 @@ graph LR
         FrontendTarget -->|Port 80| FrontendN[Frontend Pod N]
     end
     
-    style ALB fill:#ff9999
-    style BackendTarget fill:#99ccff
-    style FrontendTarget fill:#ffcc99
+    style ALB fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#fff
+    style BackendTarget fill:#1e3a8a,stroke:#1e293b,stroke-width:2px,color:#fff
+    style FrontendTarget fill:#c2410c,stroke:#9a3412,stroke-width:2px,color:#fff
 ```
 
 **Purpose**: Shows how the ALB intelligently routes traffic based on URL paths to appropriate backend or frontend services.
@@ -248,11 +248,11 @@ graph TB
     HPA -.->|Monitors & Scales| BackendPod1
     HPA -.->|Monitors & Scales| FrontendPod1
     
-    style BackendPod1 fill:#99ccff
-    style FrontendPod1 fill:#ffcc99
-    style PostgreSQL fill:#99ff99
-    style Redis fill:#ffff99
-    style HPA fill:#ff99ff
+    style BackendPod1 fill:#1e3a8a,stroke:#1e293b,stroke-width:2px,color:#fff
+    style FrontendPod1 fill:#c2410c,stroke:#9a3412,stroke-width:2px,color:#fff
+    style PostgreSQL fill:#15803d,stroke:#166534,stroke-width:2px,color:#fff
+    style Redis fill:#ca8a04,stroke:#a16207,stroke-width:2px,color:#fff
+    style HPA fill:#7e22ce,stroke:#6b21a8,stroke-width:2px,color:#fff
 ```
 
 **Purpose**: Detailed view of pod architecture, showing containers, ports, resources, volumes, and how auto-scaling works.
@@ -303,10 +303,10 @@ graph TB
     MetricsServer -.->|Provides Metrics| ProdBackend
     MetricsServer -.->|Provides Metrics| ProdFrontend
     
-    style DevBackend fill:#e1f5ff
-    style StgBackend fill:#fff4e1
-    style ProdBackend fill:#99ccff
-    style Prometheus fill:#ff99ff
+    style DevBackend fill:#3b82f6,stroke:#2563eb,stroke-width:2px,color:#fff
+    style StgBackend fill:#f59e0b,stroke:#d97706,stroke-width:2px,color:#fff
+    style ProdBackend fill:#1e3a8a,stroke:#1e293b,stroke-width:2px,color:#fff
+    style Prometheus fill:#7e22ce,stroke:#6b21a8,stroke-width:2px,color:#fff
 ```
 
 **Purpose**: Shows the multi-environment strategy with different resource allocations and scaling policies for dev, staging, and production.
@@ -353,10 +353,13 @@ graph TB
     Primary -->|On-Demand| Snapshot
     Flyway -->|Schema Updates| Primary
     
-    style Primary fill:#99ff99
-    style Standby fill:#ffffcc
-    style HikariCP fill:#99ccff
-    style Flyway fill:#ffcc99
+    style Backend fill:#1e3a8a,stroke:#1e293b,stroke-width:2px,color:#fff
+    style HikariCP fill:#0e7490,stroke:#155e75,stroke-width:2px,color:#fff
+    style Primary fill:#15803d,stroke:#166534,stroke-width:2px,color:#fff
+    style Standby fill:#065f46,stroke:#064e3b,stroke-width:2px,color:#fff
+    style AutoBackup fill:#c2410c,stroke:#9a3412,stroke-width:2px,color:#fff
+    style Snapshot fill:#ca8a04,stroke:#a16207,stroke-width:2px,color:#fff
+    style Flyway fill:#854d0e,stroke:#713f12,stroke-width:2px,color:#fff
 ```
 
 **Purpose**: Shows database connection pooling, Multi-AZ setup, backup strategy, and schema management with Flyway.
@@ -380,18 +383,18 @@ graph TB
     
     subgraph "Redis ElastiCache"
         subgraph "Primary Node"
-            RedisPrimary[(Redis Primary<br/>---<br/>cache.t3.micro<br/>1 vCPU, 0.5GB RAM<br/>---<br/>Read/Write Operations<br/>Port: 6379)]
+            RedisPrimary[(Redis Primary<br/><br/>cache.t3.micro<br/>1 vCPU, 0.5GB RAM<br/><br/>Read/Write Operations<br/>Port 6379)]
         end
         
         subgraph "Replica Nodes"
-            Replica1[(Redis Replica 1<br/>---<br/>Read-Only<br/>Automatic Sync)]
-            Replica2[(Redis Replica 2<br/>---<br/>Read-Only<br/>Automatic Sync)]
+            Replica1[(Redis Replica 1<br/><br/>Read-Only<br/>Automatic Sync)]
+            Replica2[(Redis Replica 2<br/><br/>Read-Only<br/>Automatic Sync)]
         end
         
         subgraph "Cache Types"
-            SessionCache[Session Management<br/>---<br/>User sessions<br/>TTL: 30 minutes]
-            DataCache[Data Caching<br/>---<br/>User objects<br/>API responses<br/>TTL: 5 minutes]
-            RateLimitCache[Rate Limiting<br/>---<br/>API throttling<br/>TTL: 1 minute]
+            SessionCache[Session Management<br/><br/>User sessions<br/>TTL 30 minutes]
+            DataCache[Data Caching<br/><br/>User objects<br/>API responses<br/>TTL 5 minutes]
+            RateLimitCache[Rate Limiting<br/><br/>API throttling<br/>TTL 1 minute]
         end
     end
     
@@ -410,9 +413,18 @@ graph TB
     RedisPrimary --> DataCache
     RedisPrimary --> RateLimitCache
     
-    style RedisPrimary fill:#ffff99
-    style Replica1 fill:#ffffcc
-    style CacheLogic fill:#ff99ff
+    style Backend fill:#1e3a8a,stroke:#1e293b,stroke-width:2px,color:#fff
+    style CacheLogic fill:#7e22ce,stroke:#6b21a8,stroke-width:2px,color:#fff
+    style ReturnCached fill:#15803d,stroke:#166534,stroke-width:2px,color:#fff
+    style QueryDB fill:#c2410c,stroke:#9a3412,stroke-width:2px,color:#fff
+    style StoreCache fill:#0e7490,stroke:#155e75,stroke-width:2px,color:#fff
+    style ReturnFresh fill:#15803d,stroke:#166534,stroke-width:2px,color:#fff
+    style RedisPrimary fill:#ca8a04,stroke:#a16207,stroke-width:2px,color:#fff
+    style Replica1 fill:#854d0e,stroke:#713f12,stroke-width:2px,color:#fff
+    style Replica2 fill:#854d0e,stroke:#713f12,stroke-width:2px,color:#fff
+    style SessionCache fill:#065f46,stroke:#064e3b,stroke-width:2px,color:#fff
+    style DataCache fill:#065f46,stroke:#064e3b,stroke-width:2px,color:#fff
+    style RateLimitCache fill:#065f46,stroke:#064e3b,stroke-width:2px,color:#fff
 ```
 
 **Purpose**: Illustrates caching strategy, cache hit/miss logic, Redis cluster setup, and different cache types used in the application.
@@ -437,28 +449,28 @@ graph TB
         Prometheus[📊 Prometheus Server<br/>---<br/>Scrape Interval: 15s<br/>Retention: 15 days<br/>---<br/>Service Discovery:<br/>• Kubernetes Pods<br/>• Kubernetes Services<br/>• Kubernetes Nodes]
         
         subgraph "Exporters"
-            PgExporter[PostgreSQL Exporter<br/>Port: 9187]
-            RedisExporter[Redis Exporter<br/>Port: 9121]
-            NodeExporter[Node Exporter<br/>System Metrics<br/>Port: 9100]
+            PgExporter[PostgreSQL Exporter<br/>Port 9187]
+            RedisExporter[Redis Exporter<br/>Port 9121]
+            NodeExporter[Node Exporter<br/>System Metrics<br/>Port 9100]
         end
     end
     
     subgraph "Visualization - Grafana"
-        Grafana[📈 Grafana Dashboards<br/>Port: 3000]
+        Grafana[📈 Grafana Dashboards<br/>Port 3000]
         
         subgraph "Dashboards - 12 Panels"
-            Dashboard1[Application Dashboard<br/>---<br/>• Request Rate<br/>• Response Time<br/>• Error Rate<br/>• Active Connections]
-            Dashboard2[Infrastructure Dashboard<br/>---<br/>• CPU Usage<br/>• Memory Usage<br/>• Network I/O<br/>• Disk I/O]
-            Dashboard3[Database Dashboard<br/>---<br/>• Query Performance<br/>• Connection Pool<br/>• Slow Queries<br/>• Lock Statistics]
-            Dashboard4[Cache Dashboard<br/>---<br/>• Hit/Miss Ratio<br/>• Memory Usage<br/>• Eviction Rate<br/>• Key Statistics]
+            Dashboard1[Application Dashboard<br/><br/>Request Rate<br/>Response Time<br/>Error Rate<br/>Active Connections]
+            Dashboard2[Infrastructure Dashboard<br/><br/>CPU Usage<br/>Memory Usage<br/>Network I/O<br/>Disk I/O]
+            Dashboard3[Database Dashboard<br/><br/>Query Performance<br/>Connection Pool<br/>Slow Queries<br/>Lock Statistics]
+            Dashboard4[Cache Dashboard<br/><br/>Hit/Miss Ratio<br/>Memory Usage<br/>Eviction Rate<br/>Key Statistics]
         end
     end
     
     subgraph "Distributed Tracing - Jaeger"
-        Jaeger[🔍 Jaeger System<br/>Port: 16686]
+        Jaeger[🔍 Jaeger System<br/>Port 16686]
         
         subgraph "Trace Components"
-            JaegerAgent[Jaeger Agent<br/>Sidecar in Pods<br/>Port: 6831]
+            JaegerAgent[Jaeger Agent<br/>Sidecar in Pods<br/>Port 6831]
             JaegerCollector[Jaeger Collector<br/>Trace Aggregation]
             JaegerQuery[Jaeger Query<br/>UI & API]
             JaegerStorage[(Jaeger Storage<br/>Elasticsearch)]
@@ -475,8 +487,8 @@ graph TB
         end
         
         subgraph "Alarms"
-            ErrorAlarm[Error Rate Alarm<br/>Threshold: >5%]
-            LatencyAlarm[Latency Alarm<br/>Threshold: >500ms]
+            ErrorAlarm[Error Rate Alarm<br/>Threshold >5%]
+            LatencyAlarm[Latency Alarm<br/>Threshold >500ms]
             ResourceAlarm[Resource Alarm<br/>CPU/Memory >80%]
         end
     end
@@ -508,10 +520,31 @@ graph TB
     CloudWatch --> LatencyAlarm
     CloudWatch --> ResourceAlarm
     
-    style Prometheus fill:#ff99ff
-    style Grafana fill:#99ffff
-    style Jaeger fill:#ffcc99
-    style CloudWatch fill:#99ccff
+    style Backend fill:#1e3a8a,stroke:#1e293b,stroke-width:2px,color:#fff
+    style Frontend fill:#c2410c,stroke:#9a3412,stroke-width:2px,color:#fff
+    style PostgreSQL fill:#15803d,stroke:#166534,stroke-width:2px,color:#fff
+    style Redis fill:#ca8a04,stroke:#a16207,stroke-width:2px,color:#fff
+    style Prometheus fill:#7e22ce,stroke:#6b21a8,stroke-width:2px,color:#fff
+    style PgExporter fill:#065f46,stroke:#064e3b,stroke-width:2px,color:#fff
+    style RedisExporter fill:#854d0e,stroke:#713f12,stroke-width:2px,color:#fff
+    style NodeExporter fill:#475569,stroke:#334155,stroke-width:2px,color:#fff
+    style Grafana fill:#0e7490,stroke:#155e75,stroke-width:2px,color:#fff
+    style Dashboard1 fill:#1e40af,stroke:#1e3a8a,stroke-width:2px,color:#fff
+    style Dashboard2 fill:#1e40af,stroke:#1e3a8a,stroke-width:2px,color:#fff
+    style Dashboard3 fill:#1e40af,stroke:#1e3a8a,stroke-width:2px,color:#fff
+    style Dashboard4 fill:#1e40af,stroke:#1e3a8a,stroke-width:2px,color:#fff
+    style Jaeger fill:#c2410c,stroke:#9a3412,stroke-width:2px,color:#fff
+    style JaegerAgent fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#fff
+    style JaegerCollector fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#fff
+    style JaegerQuery fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#fff
+    style JaegerStorage fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#fff
+    style CloudWatch fill:#1e40af,stroke:#1e3a8a,stroke-width:2px,color:#fff
+    style AppLogs fill:#3b82f6,stroke:#2563eb,stroke-width:2px,color:#fff
+    style InfraLogs fill:#3b82f6,stroke:#2563eb,stroke-width:2px,color:#fff
+    style AuditLogs fill:#3b82f6,stroke:#2563eb,stroke-width:2px,color:#fff
+    style ErrorAlarm fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#fff
+    style LatencyAlarm fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#fff
+    style ResourceAlarm fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#fff
 ```
 
 **Purpose**: Shows the complete observability stack with metrics collection, visualization, distributed tracing, and log aggregation.
@@ -574,43 +607,43 @@ graph TB
     end
     
     subgraph "CI Pipeline - Build & Test"
-        Checkout[📥 Checkout Code<br/>---<br/>Clone Repository<br/>Fetch Dependencies]
+        Checkout[📥 Checkout Code<br/><br/>Clone Repository<br/>Fetch Dependencies]
         
         subgraph "Backend Pipeline"
-            BackendBuild[⚙️ Build Backend<br/>---<br/>Maven clean package<br/>Run unit tests<br/>Generate JAR file]
-            BackendTest[🧪 Backend Tests<br/>---<br/>Unit Tests (JUnit)<br/>Integration Tests<br/>Code Coverage >80%]
-            BackendSecurity[🔒 Security Scan<br/>---<br/>OWASP Dependency Check<br/>Trivy Container Scan<br/>Snyk Vulnerability Scan]
+            BackendBuild[⚙️ Build Backend<br/><br/>Maven clean package<br/>Run unit tests<br/>Generate JAR file]
+            BackendTest[🧪 Backend Tests<br/><br/>Unit Tests JUnit<br/>Integration Tests<br/>Code Coverage >80%]
+            BackendSecurity[🔒 Security Scan<br/><br/>OWASP Dependency Check<br/>Trivy Container Scan<br/>Snyk Vulnerability Scan]
         end
         
         subgraph "Frontend Pipeline"
-            FrontendBuild[🎨 Build Frontend<br/>---<br/>npm install<br/>npm run build<br/>Generate optimized bundle]
-            FrontendTest[🧪 Frontend Tests<br/>---<br/>Unit Tests (Jest)<br/>Component Tests (RTL)<br/>Code Coverage >75%]
-            FrontendLint[📋 Code Quality<br/>---<br/>ESLint<br/>Prettier<br/>TypeScript Check]
+            FrontendBuild[🎨 Build Frontend<br/><br/>npm install<br/>npm run build<br/>Generate optimized bundle]
+            FrontendTest[🧪 Frontend Tests<br/><br/>Unit Tests Jest<br/>Component Tests RTL<br/>Code Coverage >75%]
+            FrontendLint[📋 Code Quality<br/><br/>ESLint<br/>Prettier<br/>TypeScript Check]
         end
         
         subgraph "Database Pipeline"
-            DBMigration[🗄️ Database Migration<br/>---<br/>Flyway validate<br/>Generate migration scripts<br/>Test migrations on temp DB]
+            DBMigration[🗄️ Database Migration<br/><br/>Flyway validate<br/>Generate migration scripts<br/>Test migrations on temp DB]
         end
     end
     
     subgraph "CD Pipeline - Deploy"
         subgraph "Container Registry"
-            DockerBuild[🐳 Build Docker Images<br/>---<br/>Backend: Multi-stage<br/>Frontend: Nginx + React<br/>Tag: git-sha + latest]
-            DockerPush[📤 Push to ECR<br/>---<br/>AWS ECR Login<br/>Push backend image<br/>Push frontend image]
+            DockerBuild[🐳 Build Docker Images<br/><br/>Backend Multi-stage<br/>Frontend Nginx + React<br/>Tag git-sha + latest]
+            DockerPush[📤 Push to ECR<br/><br/>AWS ECR Login<br/>Push backend image<br/>Push frontend image]
         end
         
         subgraph "Deployment Strategy"
-            DeployDev[🔵 Deploy to Dev<br/>---<br/>Namespace: development<br/>Replicas: 1<br/>Auto-deploy on commit]
+            DeployDev[🔵 Deploy to Dev<br/><br/>Namespace development<br/>Replicas 1<br/>Auto-deploy on commit]
             
-            DeployStaging[🟡 Deploy to Staging<br/>---<br/>Namespace: staging<br/>Replicas: 2<br/>Manual approval required]
+            DeployStaging[🟡 Deploy to Staging<br/><br/>Namespace staging<br/>Replicas 2<br/>Manual approval required]
             
-            DeployProd[🟢 Deploy to Production<br/>---<br/>Namespace: production<br/>Replicas: 2-10<br/>Blue-Green deployment<br/>Rollback capability]
+            DeployProd[🟢 Deploy to Production<br/><br/>Namespace production<br/>Replicas 2-10<br/>Blue-Green deployment<br/>Rollback capability]
         end
         
         subgraph "Post-Deployment"
-            HealthCheck[✅ Health Checks<br/>---<br/>Wait for pods ready<br/>Check /actuator/health<br/>Verify endpoints]
-            SmokeTest[🧪 Smoke Tests<br/>---<br/>Basic API tests<br/>Database connectivity<br/>Cache connectivity]
-            Notify[📢 Notifications<br/>---<br/>Slack: Deployment status<br/>Email: Team notification<br/>GitHub: Update PR status]
+            HealthCheck[✅ Health Checks<br/><br/>Wait for pods ready<br/>Check actuator health<br/>Verify endpoints]
+            SmokeTest[🧪 Smoke Tests<br/><br/>Basic API tests<br/>Database connectivity<br/>Cache connectivity]
+            Notify[📢 Notifications<br/><br/>Slack Deployment status<br/>Email Team notification<br/>GitHub Update PR status]
         end
     end
     
@@ -640,12 +673,23 @@ graph TB
     HealthCheck --> SmokeTest
     SmokeTest --> Notify
     
-    style GitPush fill:#e1f5ff
-    style BackendBuild fill:#99ccff
-    style FrontendBuild fill:#ffcc99
-    style DockerBuild fill:#99ff99
-    style DeployProd fill:#99ff99
-    style Notify fill:#ff99ff
+    style GitPush fill:#1e40af,stroke:#1e3a8a,stroke-width:2px,color:#fff
+    style Checkout fill:#1e40af,stroke:#1e3a8a,stroke-width:2px,color:#fff
+    style BackendBuild fill:#1e3a8a,stroke:#1e293b,stroke-width:2px,color:#fff
+    style BackendTest fill:#1e3a8a,stroke:#1e293b,stroke-width:2px,color:#fff
+    style BackendSecurity fill:#991b1b,stroke:#7f1d1d,stroke-width:2px,color:#fff
+    style FrontendBuild fill:#c2410c,stroke:#9a3412,stroke-width:2px,color:#fff
+    style FrontendTest fill:#c2410c,stroke:#9a3412,stroke-width:2px,color:#fff
+    style FrontendLint fill:#854d0e,stroke:#713f12,stroke-width:2px,color:#fff
+    style DBMigration fill:#065f46,stroke:#064e3b,stroke-width:2px,color:#fff
+    style DockerBuild fill:#0e7490,stroke:#155e75,stroke-width:2px,color:#fff
+    style DockerPush fill:#0e7490,stroke:#155e75,stroke-width:2px,color:#fff
+    style DeployDev fill:#1e40af,stroke:#1e3a8a,stroke-width:2px,color:#fff
+    style DeployStaging fill:#b45309,stroke:#92400e,stroke-width:2px,color:#fff
+    style DeployProd fill:#15803d,stroke:#166534,stroke-width:2px,color:#fff
+    style HealthCheck fill:#065f46,stroke:#064e3b,stroke-width:2px,color:#fff
+    style SmokeTest fill:#7e22ce,stroke:#6b21a8,stroke-width:2px,color:#fff
+    style Notify fill:#be123c,stroke:#9f1239,stroke-width:2px,color:#fff
 ```
 
 **Purpose**: Complete CI/CD workflow showing parallel builds, testing, security scanning, and multi-environment deployment strategy.
@@ -655,12 +699,12 @@ graph TB
 ```mermaid
 graph LR
     subgraph "Pre-Deployment"
-        Backup[📦 Backup Current State<br/>---<br/>Database snapshot<br/>Helm release history<br/>Pod configurations]
-        Validate[✅ Validate Resources<br/>---<br/>Helm lint<br/>Kubectl dry-run<br/>Resource quotas check]
+        Backup[📦 Backup Current State<br/><br/>Database snapshot<br/>Helm release history<br/>Pod configurations]
+        Validate[✅ Validate Resources<br/><br/>Helm lint<br/>Kubectl dry-run<br/>Resource quotas check]
     end
     
     subgraph "Deployment"
-        HelmUpgrade[⚙️ Helm Upgrade<br/>---<br/>helm upgrade --install<br/>Wait for rollout<br/>Timeout: 5 minutes]
+        HelmUpgrade[⚙️ Helm Upgrade<br/><br/>helm upgrade install<br/>Wait for rollout<br/>Timeout 5 minutes]
         
         subgraph "Rolling Update"
             OldPod1[Old Pod 1<br/>Terminating]
@@ -677,8 +721,8 @@ graph LR
     end
     
     subgraph "Post-Deployment"
-        Success[✅ Deployment Success<br/>---<br/>Update release notes<br/>Tag git commit<br/>Notify team]
-        Rollback[❌ Rollback<br/>---<br/>helm rollback<br/>Restore from backup<br/>Incident report]
+        Success[✅ Deployment Success<br/><br/>Update release notes<br/>Tag git commit<br/>Notify team]
+        Rollback[❌ Rollback<br/><br/>helm rollback<br/>Restore from backup<br/>Incident report]
     end
     
     Backup --> Validate
@@ -696,10 +740,18 @@ graph LR
     TrafficTest -->|Yes| Success
     TrafficTest -->|No| Rollback
     
-    style Backup fill:#99ccff
-    style HelmUpgrade fill:#ffcc99
-    style Success fill:#99ff99
-    style Rollback fill:#ff9999
+    style Backup fill:#1e40af,stroke:#1e3a8a,stroke-width:2px,color:#fff
+    style Validate fill:#065f46,stroke:#064e3b,stroke-width:2px,color:#fff
+    style HelmUpgrade fill:#c2410c,stroke:#9a3412,stroke-width:2px,color:#fff
+    style OldPod1 fill:#6b7280,stroke:#4b5563,stroke-width:2px,color:#fff
+    style OldPod2 fill:#6b7280,stroke:#4b5563,stroke-width:2px,color:#fff
+    style NewPod1 fill:#1e40af,stroke:#1e3a8a,stroke-width:2px,color:#fff
+    style NewPod2 fill:#1e40af,stroke:#1e3a8a,stroke-width:2px,color:#fff
+    style PodReady fill:#7e22ce,stroke:#6b21a8,stroke-width:2px,color:#fff
+    style HealthPass fill:#7e22ce,stroke:#6b21a8,stroke-width:2px,color:#fff
+    style TrafficTest fill:#7e22ce,stroke:#6b21a8,stroke-width:2px,color:#fff
+    style Success fill:#15803d,stroke:#166534,stroke-width:2px,color:#fff
+    style Rollback fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#fff
 ```
 
 **Purpose**: Detailed deployment process showing backup, validation, rolling update strategy, health checks, and rollback mechanism.
