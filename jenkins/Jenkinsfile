@@ -192,7 +192,8 @@ pipeline {
                             mvn --version
                         '''
                     } else {
-                        echo "✅ Maven already available: $(mvn --version | head -1)"
+                        def mavenVersion = sh(script: 'mvn --version | head -1', returnStdout: true).trim()
+                        echo "✅ Maven already available: ${mavenVersion}"
                     }
                     
                     // Check if Node.js is available, install if not
@@ -207,7 +208,8 @@ pipeline {
                             npm --version
                         '''
                     } else {
-                        echo "✅ Node.js already available: $(node --version)"
+                        def nodeVersion = sh(script: 'node --version', returnStdout: true).trim()
+                        echo "✅ Node.js already available: ${nodeVersion}"
                     }
                     
                     // Verify Docker is available
@@ -215,7 +217,8 @@ pipeline {
                     if (dockerStatus != 0) {
                         error "❌ Docker is required but not installed. Please install Docker on the Jenkins agent."
                     } else {
-                        echo "✅ Docker available: $(docker --version)"
+                        def dockerVersion = sh(script: 'docker --version', returnStdout: true).trim()
+                        echo "✅ Docker available: ${dockerVersion}"
                     }
                 }
             }
