@@ -1,0 +1,950 @@
+# Complete CI/CD Pipeline for Java Microservice
+# This workflow provides comprehensive build, test, security scanning, and deployment automation
+
+name: 🚀 Complete CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop, 'feature/**', 'hotfix/**' ]
+    paths:
+      - 'app/**'
+      - '.github/workflows/**'
+      - 'deployment/**'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'app/**'
+      - '.github/workflows/**'
+      - 'deployment/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+      skip_tests:
+        description: 'Skip tests'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  # Application Configuration
+  APP_NAME: java-microservice
+  BACKEND_NAME: java-microservice-backend
+  FRONTEND_NAME: java-microservice-frontend
+  JAVA_VERSION: '17'
+  MAVEN_VERSION: '3.9.5'
+  NODE_VERSION: '18.18.0'
+  
+  # Container Registry
+  REGISTRY: ghcr.io
+  BACKEND_IMAGE: ${{ github.repository }}-backend
+  FRONTEND_IMAGE: ${{ github.repository }}-frontend
+  
+  # AWS Configuration
+  AWS_REGION: us-east-1
+  
+  # Database Configuration
+  DB_ENGINE: postgres
+  DB_VERSION: '15.4'
+  REDIS_VERSION: '7.0'
+  
+  # Quality Gates
+  SONAR_PROJECT_KEY: ${{ github.repository_owner }}_${{ github.event.repository.name }}
+  
+  # Security Configuration
+  SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+jobs:
+  # ==========================================
+  # CODE QUALITY AND SECURITY ANALYSIS
+  # ==========================================
+  code-analysis:
+    name: 🔍 Code Quality & Security Analysis
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      should-deploy: ${{ steps.changes.outputs.app-changed }}
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Shallow clones should be disabled for better analysis
+      
+      - name: 🔍 Detect Changes
+        uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: |
+            backend-changed:
+              - 'app/src/**'
+              - 'app/pom.xml'
+              - 'app/Dockerfile'
+            frontend-changed:
+              - 'app/frontend/**'
+              - 'app/package*.json'
+            deployment-changed:
+              - 'deployment/**'
+              - '.github/workflows/**'
+            infrastructure-changed:
+              - 'terraform/**'
+              - 'ansible/**'
+            app-changed:
+              - 'app/**'
+              - '.github/workflows/**'
+      
+      - name: 🏷️ Generate Version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            VERSION="pr-${{ github.event.number }}-$(echo ${{ github.sha }} | cut -c1-8)"
+          elif [[ "${{ github.ref_name }}" == "main" ]]; then
+            VERSION="v$(date +'%Y.%m.%d')-$(echo ${{ github.sha }} | cut -c1-8)"
+          else
+            VERSION="${{ github.ref_name }}-$(echo ${{ github.sha }} | cut -c1-8)"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Generated version: ${VERSION}"
+      
+      - name: ☕ Setup Java
+        if: steps.changes.outputs.app-changed == 'true'
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: maven
+      
+      - name: 📊 Cache SonarQube packages
+        if: steps.changes.outputs.app-changed == 'true'
+        uses: actions/cache@v3
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+      
+      - name: 🔍 Run SonarQube Analysis
+        if: steps.changes.outputs.app-changed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          cd app
+          if [[ -n "${{ secrets.SONAR_TOKEN }}" ]]; then
+            mvn clean verify sonar:sonar \
+              -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }} \
+              -Dsonar.organization=${{ github.repository_owner }} \
+              -Dsonar.host.url=https://sonarcloud.io \
+              -Dsonar.login=${{ secrets.SONAR_TOKEN }} \
+              -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
+          else
+            echo "⚠️ SonarQube analysis skipped - SONAR_TOKEN not configured"
+            mvn clean verify
+          fi
+      
+      - name: 🛡️ Run Snyk Security Scan
+        if: steps.changes.outputs.app-changed == 'true'
+        uses: snyk/actions/maven@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=medium --file=app/pom.xml
+      
+      - name: 📤 Upload Snyk Results
+        if: steps.changes.outputs.app-changed == 'true'
+        uses: github/codeql-action/upload-sarif@v2
+        continue-on-error: true
+        with:
+          sarif_file: snyk.sarif
+
+  # ==========================================
+  # BACKEND BUILD AND TEST
+  # ==========================================
+  build-backend:
+    name: ☕ Backend Build & Test
+    runs-on: ubuntu-latest
+    needs: code-analysis
+    if: needs.code-analysis.outputs.backend-changed == 'true' || needs.code-analysis.outputs.app-changed == 'true'
+    
+    strategy:
+      matrix:
+        java-version: ['17', '21']  # Test multiple Java versions
+    
+    services:
+      postgres:
+        image: postgres:15.4
+        env:
+          POSTGRES_DB: testdb
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7.0-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: ☕ Setup Java ${{ matrix.java-version }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ matrix.java-version }}
+          distribution: 'temurin'
+          cache: maven
+      
+      - name: 🔧 Setup Maven
+        uses: stCarolas/setup-maven@v4.5
+        with:
+          maven-version: ${{ env.MAVEN_VERSION }}
+      
+      - name: 📋 Display Environment Info
+        run: |
+          echo "Java Version: $(java -version)"
+          echo "Maven Version: $(mvn -version)"
+          echo "OS: $(uname -a)"
+          echo "PostgreSQL Status: $(pg_isready -h localhost -p 5432 -U testuser)"
+          echo "Redis Status: $(redis-cli -h localhost -p 6379 ping)"
+      
+      - name: 🗄️ Wait for Database
+        run: |
+          for i in {1..30}; do
+            if pg_isready -h localhost -p 5432 -U testuser; then
+              echo "PostgreSQL is ready!"
+              break
+            fi
+            echo "Waiting for PostgreSQL... ($i/30)"
+            sleep 2
+          done
+      
+      - name: 🏗️ Build Backend Application
+        run: |
+          cd app
+          mvn clean compile -B -V
+      
+      - name: 🧪 Run Backend Unit Tests
+        if: ${{ !inputs.skip_tests }}
+        env:
+          SPRING_PROFILES_ACTIVE: test
+          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/testdb
+          SPRING_DATASOURCE_USERNAME: testuser
+          SPRING_DATASOURCE_PASSWORD: testpass
+          SPRING_REDIS_HOST: localhost
+          SPRING_REDIS_PORT: 6379
+        run: |
+          cd app
+          mvn test -B
+      
+      - name: 🧪 Run Backend Integration Tests
+        if: ${{ !inputs.skip_tests }}
+        env:
+          SPRING_PROFILES_ACTIVE: test
+          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/testdb
+          SPRING_DATASOURCE_USERNAME: testuser
+          SPRING_DATASOURCE_PASSWORD: testpass
+          SPRING_REDIS_HOST: localhost
+          SPRING_REDIS_PORT: 6379
+        run: |
+          cd app
+          mvn verify -B -Dskip.unit.tests=true
+      
+      - name: 📊 Generate Test Reports
+        if: always()
+        run: |
+          cd app
+          mvn surefire-report:report site -DgenerateReports=false
+      
+      - name: 📤 Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: backend-test-results-java-${{ matrix.java-version }}
+          path: |
+            app/target/surefire-reports/**
+            app/target/site/**
+            app/target/jacoco-report/**
+      
+      - name: 📦 Build Backend JAR
+        if: matrix.java-version == '17'  # Only build artifact once
+        run: |
+          cd app
+          mvn package -B -DskipTests
+      
+      - name: 📤 Upload Backend Artifact
+        if: matrix.java-version == '17'
+        uses: actions/upload-artifact@v3
+        with:
+          name: backend-jar
+          path: app/target/*.jar
+          retention-days: 30
+
+  # ==========================================
+  # FRONTEND BUILD AND TEST  
+  # ==========================================
+  build-frontend:
+    name: ⚛️ Frontend Build & Test
+    runs-on: ubuntu-latest
+    needs: code-analysis
+    if: needs.code-analysis.outputs.frontend-changed == 'true' || needs.code-analysis.outputs.app-changed == 'true'
+    
+    strategy:
+      matrix:
+        node-version: ['18', '20']  # Test multiple Node.js versions
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 🟢 Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+          cache-dependency-path: 'app/frontend/package-lock.json'
+      
+      - name: 📋 Display Environment Info
+        run: |
+          echo "Node.js Version: $(node --version)"
+          echo "NPM Version: $(npm --version)"
+          echo "OS: $(uname -a)"
+      
+      - name: 📦 Install Frontend Dependencies
+        run: |
+          cd app/frontend
+          npm ci --prefer-offline --no-audit
+      
+      - name: 🔍 Run Frontend Linting
+        run: |
+          cd app/frontend
+          npm run lint
+      
+      - name: 🧪 Run Frontend Unit Tests
+        if: ${{ !inputs.skip_tests }}
+        run: |
+          cd app/frontend
+          npm run test:coverage
+      
+      - name: 🏗️ Build Frontend Application
+        run: |
+          cd app/frontend
+          npm run build
+      
+      - name: 📊 Frontend Bundle Analysis
+        run: |
+          cd app/frontend
+          npm run build:analyze || echo "Bundle analysis not available"
+      
+      - name: 📤 Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: frontend-test-results-node-${{ matrix.node-version }}
+          path: |
+            app/frontend/coverage/**
+            app/frontend/test-results/**
+      
+      - name: 📤 Upload Frontend Build
+        if: matrix.node-version == '18'  # Only upload once
+        uses: actions/upload-artifact@v3
+        with:
+          name: frontend-dist
+          path: app/frontend/dist
+          retention-days: 30
+
+  # ==========================================
+  # BACKEND CONTAINER BUILD AND SCAN
+  # ==========================================
+  build-backend-container:
+    name: 🐳 Backend Container Build & Scan
+    runs-on: ubuntu-latest
+    needs: [code-analysis, build-backend]
+    if: needs.code-analysis.outputs.backend-changed == 'true' || needs.code-analysis.outputs.app-changed == 'true'
+    outputs:
+      backend-image-digest: ${{ steps.build.outputs.digest }}
+      backend-image-tag: ${{ steps.meta.outputs.tags }}
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 📥 Download Backend Artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: backend-jar
+          path: app/target/
+      
+      - name: 🐳 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: 🔐 Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: 🏷️ Extract Backend Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ needs.code-analysis.outputs.version }}
+            type=raw,value=latest,enable={{is_default_branch}}
+      
+      - name: 🏗️ Build and Push Backend Container
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app
+          file: ./app/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+      
+      - name: 🛡️ Run Trivy Container Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ needs.code-analysis.outputs.version }}
+          format: 'sarif'
+          output: 'trivy-backend-results.sarif'
+      
+      - name: � Upload Trivy Results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-backend-results.sarif'
+
+  # ==========================================
+  # FRONTEND CONTAINER BUILD AND SCAN
+  # ==========================================
+  build-frontend-container:
+    name: �🐳 Frontend Container Build & Scan
+    runs-on: ubuntu-latest
+    needs: [code-analysis, build-frontend]
+    if: needs.code-analysis.outputs.frontend-changed == 'true' || needs.code-analysis.outputs.app-changed == 'true'
+    outputs:
+      frontend-image-digest: ${{ steps.build.outputs.digest }}
+      frontend-image-tag: ${{ steps.meta.outputs.tags }}
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 📥 Download Frontend Build
+        uses: actions/download-artifact@v3
+        with:
+          name: frontend-dist
+          path: app/frontend/dist/
+      
+      - name: 🐳 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: 🔐 Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: 🏷️ Extract Frontend Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ needs.code-analysis.outputs.version }}
+            type=raw,value=latest,enable={{is_default_branch}}
+      
+      - name: 🏗️ Build and Push Frontend Container
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app/frontend
+          file: ./app/frontend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+      
+      - name: 🛡️ Run Trivy Container Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ needs.code-analysis.outputs.version }}
+          format: 'sarif'
+          output: 'trivy-frontend-results.sarif'
+      
+      - name: 📤 Upload Trivy Results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-frontend-results.sarif'
+
+  # ==========================================
+  # DATABASE MIGRATION
+  # ==========================================
+  database-migration:
+    name: 🗄️ Database Migration
+    runs-on: ubuntu-latest
+    needs: [code-analysis, build-backend]
+    if: needs.code-analysis.outputs.backend-changed == 'true' || needs.code-analysis.outputs.app-changed == 'true'
+    
+    strategy:
+      matrix:
+        environment: ['development', 'staging']
+        
+    environment:
+      name: ${{ matrix.environment }}-db
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: ☕ Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: maven
+      
+      - name: 📥 Download Backend Artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: backend-jar
+          path: app/target/
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: 🔍 Get Database Connection Info
+        id: db-info
+        run: |
+          if [[ "${{ matrix.environment }}" == "development" ]]; then
+            echo "db-endpoint=${{ secrets.DEV_DB_ENDPOINT }}" >> $GITHUB_OUTPUT
+            echo "db-name=${{ secrets.DEV_DB_NAME }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ matrix.environment }}" == "staging" ]]; then
+            echo "db-endpoint=${{ secrets.STAGING_DB_ENDPOINT }}" >> $GITHUB_OUTPUT
+            echo "db-name=${{ secrets.STAGING_DB_NAME }}" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: 🗄️ Run Database Migrations
+        env:
+          DB_ENDPOINT: ${{ steps.db-info.outputs.db-endpoint }}
+          DB_NAME: ${{ steps.db-info.outputs.db-name }}
+          DB_USERNAME: ${{ secrets.DB_USERNAME }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          cd app
+          mvn flyway:migrate \
+            -Dflyway.url=jdbc:postgresql://${DB_ENDPOINT}:5432/${DB_NAME} \
+            -Dflyway.user=${DB_USERNAME} \
+            -Dflyway.password=${DB_PASSWORD} \
+            -Dflyway.locations=filesystem:src/main/resources/db/migration
+      
+      - name: 🔍 Validate Database Schema
+        env:
+          DB_ENDPOINT: ${{ steps.db-info.outputs.db-endpoint }}
+          DB_NAME: ${{ steps.db-info.outputs.db-name }}
+          DB_USERNAME: ${{ secrets.DB_USERNAME }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          cd app
+          mvn flyway:validate \
+            -Dflyway.url=jdbc:postgresql://${DB_ENDPOINT}:5432/${DB_NAME} \
+            -Dflyway.user=${DB_USERNAME} \
+            -Dflyway.password=${DB_PASSWORD}
+      
+      - name: � Generate SBOM for Backend
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ needs.code-analysis.outputs.version }}
+          format: spdx-json
+          output-file: backend-sbom.spdx.json
+      
+      - name: 📊 Generate SBOM for Frontend
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ needs.code-analysis.outputs.version }}
+          format: spdx-json
+          output-file: frontend-sbom.spdx.json
+      
+      - name: 📤 Upload SBOMs
+        uses: actions/upload-artifact@v3
+        with:
+          name: sbom
+          path: sbom.spdx.json
+
+  # ==========================================
+  # INFRASTRUCTURE VALIDATION
+  # ==========================================
+  infrastructure-validation:
+    name: 🏗️ Infrastructure Validation
+    runs-on: ubuntu-latest
+    needs: code-analysis
+    if: needs.code-analysis.outputs.should-deploy == 'true'
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.12.2
+      
+      - name: 🔧 Setup Packer
+        uses: hashicorp/setup-packer@main
+        with:
+          version: 1.14.2
+      
+      - name: ✅ Terraform Format Check
+        run: |
+          cd terraform
+          terraform fmt -check -recursive
+      
+      - name: ✅ Terraform Validation
+        run: |
+          cd terraform
+          terraform init -backend=false
+          terraform validate
+      
+      - name: 🔍 Terraform Security Scan
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          working_directory: terraform
+          soft_fail: true
+      
+      - name: ✅ Packer Validation
+        run: |
+          cd packer
+          packer validate -var-file="variables.pkrvars.hcl" app_ami.pkr.hcl
+      
+      - name: ✅ Ansible Syntax Check
+        run: |
+          pip install ansible
+          cd ansible
+          ansible-playbook --syntax-check server-setup.yml
+          ansible-playbook --syntax-check k8s-setup.yml
+
+  # ==========================================
+  # DEPLOYMENT TO DEVELOPMENT
+  # ==========================================
+  deploy-development:
+    name: 🚀 Deploy to Development
+    runs-on: ubuntu-latest
+    needs: [code-analysis, build-backend-container, build-frontend-container, database-migration, infrastructure-validation]
+    if: |
+      (needs.code-analysis.outputs.backend-changed == 'true' || 
+       needs.code-analysis.outputs.frontend-changed == 'true' ||
+       needs.code-analysis.outputs.app-changed == 'true') && 
+      (github.ref == 'refs/heads/develop' || 
+       github.event_name == 'workflow_dispatch' && inputs.environment == 'development')
+    environment:
+      name: development
+      url: https://dev.your-domain.com
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: 🔧 Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.2'
+      
+      - name: 🔧 Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: 'v3.13.0'
+      
+      - name: 🔄 Deploy Full-Stack Application
+        run: |
+          # Update kubeconfig for development cluster
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name dev-cluster
+          
+          # Deploy full-stack application using Helm
+          helm upgrade --install ${{ env.APP_NAME }} ./deployment/helm/java-microservice \
+            --namespace development \
+            --create-namespace \
+            --values ./deployment/helm/java-microservice/values-dev.yaml \
+            --set backend.image.repository=${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }} \
+            --set backend.image.tag=${{ needs.code-analysis.outputs.version }} \
+            --set frontend.image.repository=${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }} \
+            --set frontend.image.tag=${{ needs.code-analysis.outputs.version }} \
+            --set postgresql.auth.database=${{ secrets.DEV_DB_NAME }} \
+            --set postgresql.auth.username=${{ secrets.DB_USERNAME }} \
+            --set postgresql.auth.password=${{ secrets.DB_PASSWORD }} \
+            --set redis.auth.password=${{ secrets.REDIS_PASSWORD }} \
+            --set ingress.enabled=true \
+            --set ingress.hosts[0].host=dev.your-domain.com \
+            --wait --timeout=15m
+      
+      - name: 🧪 Run Smoke Tests
+        run: |
+          # Wait for deployment to be ready
+          kubectl wait --for=condition=available --timeout=300s deployment/${{ env.APP_NAME }} -n development
+          
+          # Run basic health check
+          kubectl run curl-test --image=curlimages/curl --rm -i --restart=Never -- \
+            curl -f http://${{ env.APP_NAME }}.development.svc.cluster.local:8080/actuator/health
+      
+      - name: 📊 Update Deployment Status
+        if: always()
+        run: |
+          echo "Deployment Status: ${{ job.status }}"
+          echo "Environment: development"
+          echo "Version: ${{ needs.code-analysis.outputs.version }}"
+
+  # ==========================================
+  # DEPLOYMENT TO STAGING
+  # ==========================================
+  deploy-staging:
+    name: 🎭 Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [code-analysis, build-backend-container, build-frontend-container, database-migration, deploy-development]
+    if: |
+      (needs.code-analysis.outputs.backend-changed == 'true' || 
+       needs.code-analysis.outputs.frontend-changed == 'true' ||
+       needs.code-analysis.outputs.app-changed == 'true') && 
+      (github.ref == 'refs/heads/main' || 
+       github.event_name == 'workflow_dispatch' && inputs.environment == 'staging')
+    environment:
+      name: staging
+      url: https://staging.your-domain.com
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: 🔧 Setup kubectl
+        uses: azure/setup-kubectl@v3
+      
+      - name: 🔧 Setup Helm
+        uses: azure/setup-helm@v3
+      
+      - name: 🔄 Deploy Full-Stack to Staging
+        run: |
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name staging-cluster
+          
+          # Deploy full-stack application to staging
+          helm upgrade --install ${{ env.APP_NAME }} ./deployment/helm/java-microservice \
+            --namespace staging \
+            --create-namespace \
+            --values ./deployment/helm/java-microservice/values-staging.yaml \
+            --set backend.image.repository=${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }} \
+            --set backend.image.tag=${{ needs.code-analysis.outputs.version }} \
+            --set frontend.image.repository=${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }} \
+            --set frontend.image.tag=${{ needs.code-analysis.outputs.version }} \
+            --set postgresql.auth.database=${{ secrets.STAGING_DB_NAME }} \
+            --set postgresql.auth.username=${{ secrets.DB_USERNAME }} \
+            --set postgresql.auth.password=${{ secrets.DB_PASSWORD }} \
+            --set redis.auth.password=${{ secrets.REDIS_PASSWORD }} \
+            --set backend.resources.requests.cpu=500m \
+            --set backend.resources.requests.memory=1Gi \
+            --set backend.resources.limits.cpu=1000m \
+            --set backend.resources.limits.memory=2Gi \
+            --set frontend.resources.requests.cpu=100m \
+            --set frontend.resources.requests.memory=256Mi \
+            --set frontend.resources.limits.cpu=500m \
+            --set frontend.resources.limits.memory=512Mi \
+            --set ingress.enabled=true \
+            --set ingress.hosts[0].host=staging.your-domain.com \
+            --wait --timeout=15m
+      
+      - name: 🧪 Run Integration Tests
+        run: |
+          kubectl wait --for=condition=available --timeout=300s deployment/${{ env.APP_NAME }} -n staging
+          
+          # Run comprehensive integration tests
+          echo "Running integration tests against staging environment..."
+          # Add your integration test commands here
+      
+      - name: 🧪 Run Performance Tests
+        run: |
+          # Run load tests using k6 or similar
+          echo "Running performance tests..."
+          # Add performance testing commands here
+
+  # ==========================================
+  # PRODUCTION DEPLOYMENT APPROVAL
+  # ==========================================
+  production-approval:
+    name: 📋 Production Deployment Approval
+    runs-on: ubuntu-latest
+    needs: [deploy-staging]
+    if: |
+      github.ref == 'refs/heads/main' && 
+      github.event_name != 'workflow_dispatch'
+    environment:
+      name: production-approval
+    
+    steps:
+      - name: 📋 Manual Approval Required
+        run: |
+          echo "Production deployment requires manual approval"
+          echo "Version: ${{ needs.code-analysis.outputs.version }}"
+          echo "Please review staging deployment before approving production"
+
+  # ==========================================
+  # PRODUCTION DEPLOYMENT
+  # ==========================================
+  deploy-production:
+    name: 🌟 Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [code-analysis, build-backend-container, build-frontend-container, database-migration, production-approval]
+    if: |
+      (needs.production-approval.result == 'success' || 
+       github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
+    environment:
+      name: production
+      url: https://your-domain.com
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: 🔧 Setup kubectl
+        uses: azure/setup-kubectl@v3
+      
+      - name: 🔧 Setup Helm
+        uses: azure/setup-helm@v3
+      
+      - name: 🔄 Full-Stack Blue-Green Deployment
+        run: |
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name prod-cluster
+          
+          # Deploy full-stack application to production with blue-green strategy
+          helm upgrade --install ${{ env.APP_NAME }} ./deployment/helm/java-microservice \
+            --namespace production \
+            --create-namespace \
+            --values ./deployment/helm/java-microservice/values-prod.yaml \
+            --set backend.image.repository=${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }} \
+            --set backend.image.tag=${{ needs.code-analysis.outputs.version }} \
+            --set frontend.image.repository=${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }} \
+            --set frontend.image.tag=${{ needs.code-analysis.outputs.version }} \
+            --set postgresql.auth.database=${{ secrets.PROD_DB_NAME }} \
+            --set postgresql.auth.username=${{ secrets.DB_USERNAME }} \
+            --set postgresql.auth.password=${{ secrets.DB_PASSWORD }} \
+            --set redis.auth.password=${{ secrets.REDIS_PASSWORD }} \
+            --set backend.replicaCount=3 \
+            --set backend.resources.requests.cpu=1000m \
+            --set backend.resources.requests.memory=2Gi \
+            --set backend.resources.limits.cpu=2000m \
+            --set backend.resources.limits.memory=4Gi \
+            --set frontend.replicaCount=2 \
+            --set frontend.resources.requests.cpu=500m \
+            --set frontend.resources.requests.memory=512Mi \
+            --set frontend.resources.limits.cpu=1000m \
+            --set frontend.resources.limits.memory=1Gi \
+            --set ingress.enabled=true \
+            --set ingress.hosts[0].host=your-domain.com \
+            --set backend.autoscaling.enabled=true \
+            --set backend.autoscaling.minReplicas=3 \
+            --set backend.autoscaling.maxReplicas=10 \
+            --set frontend.autoscaling.enabled=true \
+            --set frontend.autoscaling.minReplicas=2 \
+            --set frontend.autoscaling.maxReplicas=5 \
+            --wait --timeout=20m
+      
+      - name: 🧪 Production Health Check
+        run: |
+          kubectl wait --for=condition=available --timeout=600s deployment/${{ env.APP_NAME }} -n production
+          
+          # Verify all pods are running
+          kubectl get pods -n production -l app=${{ env.APP_NAME }}
+          
+          # Run health check
+          kubectl run health-check --image=curlimages/curl --rm -i --restart=Never -- \
+            curl -f http://${{ env.APP_NAME }}.production.svc.cluster.local:8080/actuator/health
+      
+      - name: 📊 Notify Deployment Success
+        if: success()
+        run: |
+          echo "✅ Production deployment successful!"
+          echo "Version: ${{ needs.code-analysis.outputs.version }}"
+          echo "URL: https://your-domain.com"
+
+  # ==========================================
+  # CLEANUP
+  # ==========================================
+  cleanup:
+    name: 🧹 Cleanup
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    if: always()
+    
+    steps:
+      - name: 🧹 Clean up old container images
+        run: |
+          echo "Cleaning up old container images..."
+          # Keep only last 10 versions
+          # This would be implemented with GitHub API calls
+
+      - name: 📊 Generate Deployment Report
+        run: |
+          echo "=== Deployment Report ===" 
+          echo "Workflow: ${{ github.workflow }}"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Version: ${{ needs.code-analysis.outputs.version }}"
+          echo "Triggered by: ${{ github.actor }}"
+          echo "Status: ${{ job.status }}"

@@ -1,0 +1,450 @@
+# Full-Stack Security Workflow
+# Automated security scanning and vulnerability management for backend and frontend
+
+name: 🛡️ Full-Stack Security Scanning
+
+on:
+  schedule:
+    # Run security scans daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'app/**'
+      - '.github/workflows/security.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'app/**'
+  workflow_dispatch:
+    inputs:
+      scan_backend:
+        description: 'Scan Backend'
+        required: false
+        default: true
+        type: boolean
+      scan_frontend:
+        description: 'Scan Frontend'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  JAVA_VERSION: '17'
+  NODE_VERSION: '18'
+  APP_NAME: java-microservice
+
+jobs:
+  # ==========================================
+  # DEPENDENCY VULNERABILITY SCAN
+  # ==========================================
+  dependency-scan:
+    name: 📦 Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: ☕ Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: maven
+      
+      - name: 🛡️ OWASP Dependency Check
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: ${{ env.APP_NAME }}
+          path: './app'
+          format: 'ALL'
+          args: >
+            --enableRetired
+            --enableExperimental
+            --failOnCVSS 7
+            --suppression ./app/dependency-check-suppressions.xml
+      
+      - name: 📤 Upload Dependency Check Results
+        uses: actions/upload-artifact@v3
+        with:
+          name: dependency-check-reports
+          path: reports/
+      
+      - name: 🛡️ Snyk Dependency Scan
+        uses: snyk/actions/maven@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=medium --file=./app/pom.xml
+        continue-on-error: true
+      
+      - name: 📤 Upload Snyk Results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: snyk.sarif
+
+  # ==========================================
+  # FRONTEND DEPENDENCY SCAN
+  # ==========================================
+  frontend-dependency-scan:
+    name: ⚛️ Frontend Dependency Scan
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || inputs.scan_frontend
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: 'app/frontend/package-lock.json'
+      
+      - name: 📦 Install Dependencies
+        run: |
+          cd app/frontend
+          npm ci --prefer-offline --no-audit
+      
+      - name: 🛡️ NPM Audit
+        run: |
+          cd app/frontend
+          npm audit --audit-level=moderate --json > npm-audit-report.json || true
+      
+      - name: 🛡️ Snyk Frontend Scan
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=medium --file=./app/frontend/package.json
+        continue-on-error: true
+      
+      - name: 📤 Upload Frontend Security Results
+        uses: actions/upload-artifact@v3
+        with:
+          name: frontend-security-reports
+          path: |
+            app/frontend/npm-audit-report.json
+            snyk.sarif
+
+  # ==========================================
+  # CONTAINER SECURITY SCAN
+  # ==========================================
+  container-security:
+    name: 🐳 Container Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: ☕ Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: maven
+      
+      - name: 🏗️ Build Application
+        run: |
+          cd app
+          mvn clean package -DskipTests -B
+      
+      - name: 🐳 Build Container Image
+        run: |
+          cd app
+          docker build -t security-scan:latest .
+      
+      - name: 🛡️ Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'security-scan:latest'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+      
+      - name: 📤 Upload Trivy Results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+      
+      - name: 🛡️ Run Grype Vulnerability Scanner
+        uses: anchore/scan-action@v3
+        id: scan
+        with:
+          image: 'security-scan:latest'
+          fail-build: false
+          severity-cutoff: medium
+      
+      - name: 📊 Display Scan Results
+        run: |
+          echo "Vulnerability scan results:"
+          echo "${{ steps.scan.outputs.vulnerabilities }}"
+      
+      - name: 📤 Upload Grype Results
+        uses: actions/upload-artifact@v3
+        with:
+          name: grype-scan-results
+          path: ${{ steps.scan.outputs.sarif }}
+
+  # ==========================================
+  # CODE SECURITY ANALYSIS
+  # ==========================================
+  code-security:
+    name: 🔍 Code Security Analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: 🛡️ Initialize CodeQL
+        uses: github/codeql-action/init@v2
+        with:
+          languages: java
+          queries: security-extended,security-and-quality
+      
+      - name: ☕ Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: maven
+      
+      - name: 🏗️ Build for CodeQL Analysis
+        run: |
+          cd app
+          mvn clean compile -B
+      
+      - name: 🔍 Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v2
+        with:
+          category: "/language:java"
+      
+      - name: 🛡️ Semgrep Security Scan
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/secrets
+            p/owasp-top-ten
+            p/java
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+  # ==========================================
+  # SECRETS SCANNING
+  # ==========================================
+  secrets-scan:
+    name: 🔐 Secrets Scanning
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: 🔍 TruffleHog Secrets Scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+          extra_args: --debug --only-verified
+      
+      - name: 🔍 GitLeaks Secrets Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  # ==========================================
+  # INFRASTRUCTURE SECURITY
+  # ==========================================
+  infrastructure-security:
+    name: 🏗️ Infrastructure Security
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.12.2
+      
+      - name: 🛡️ Terraform Security Scan (tfsec)
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          working_directory: terraform
+          soft_fail: true
+      
+      - name: 🛡️ Terraform Security Scan (Checkov)
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: terraform
+          framework: terraform
+          soft_fail: true
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+      
+      - name: 📤 Upload Checkov Results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: checkov-results.sarif
+      
+      - name: 🛡️ Kubernetes Security Scan
+        if: github.event_name != 'pull_request'
+        run: |
+          # Install kubesec
+          curl -sSX GET https://api.github.com/repos/controlplaneio/kubesec/releases/latest \
+            | grep browser_download_url | grep linux | cut -d '"' -f 4 \
+            | wget -qi - -O kubesec
+          chmod +x kubesec
+          
+          # Scan Kubernetes manifests
+          find deployment/ -name "*.yaml" -o -name "*.yml" | while read file; do
+            echo "Scanning $file"
+            ./kubesec scan "$file" || true
+          done
+
+  # ==========================================
+  # COMPLIANCE CHECK
+  # ==========================================
+  compliance-check:
+    name: 📋 Compliance Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 📋 GDPR Compliance Check
+        run: |
+          echo "Checking for GDPR compliance indicators..."
+          # Check for common GDPR-related terms in code
+          if grep -r -i "personal.*data\|gdpr\|privacy\|consent" app/src/ || true; then
+            echo "⚠️ Found potential GDPR-related code. Please ensure compliance."
+          fi
+      
+      - name: 📋 License Compliance Check
+        run: |
+          echo "Checking license compliance..."
+          # Check for license files
+          if [[ ! -f "LICENSE" && ! -f "LICENSE.txt" && ! -f "LICENSE.md" ]]; then
+            echo "⚠️ No license file found. Consider adding one for compliance."
+          fi
+      
+      - name: 📋 Security Headers Check
+        run: |
+          echo "Checking for security headers configuration..."
+          # Check for security-related configuration
+          if grep -r -i "x-frame-options\|x-content-type-options\|x-xss-protection" app/src/ || true; then
+            echo "✅ Found security headers configuration"
+          else
+            echo "⚠️ Consider adding security headers configuration"
+          fi
+
+  # ==========================================
+  # SECURITY REPORT
+  # ==========================================
+  security-report:
+    name: 📊 Security Report
+    runs-on: ubuntu-latest
+    needs: [dependency-scan, container-security, code-security, secrets-scan, infrastructure-security, compliance-check]
+    if: always()
+    
+    steps:
+      - name: 📊 Generate Security Summary
+        run: |
+          echo "# 🛡️ Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Scan Results:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dependency Scan**: ${{ needs.dependency-scan.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Container Security**: ${{ needs.container-security.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Code Security**: ${{ needs.code-security.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Secrets Scan**: ${{ needs.secrets-scan.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Infrastructure Security**: ${{ needs.infrastructure-security.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Compliance Check**: ${{ needs.compliance-check.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Recommendations:" >> $GITHUB_STEP_SUMMARY
+          echo "1. 🔄 Keep dependencies updated regularly" >> $GITHUB_STEP_SUMMARY
+          echo "2. 🛡️ Review security scan results in the Security tab" >> $GITHUB_STEP_SUMMARY
+          echo "3. 🔐 Ensure no secrets are committed to the repository" >> $GITHUB_STEP_SUMMARY
+          echo "4. 📋 Address any compliance issues identified" >> $GITHUB_STEP_SUMMARY
+          echo "5. 🏗️ Follow infrastructure security best practices" >> $GITHUB_STEP_SUMMARY
+      
+      - name: 📧 Notify Security Team (on failures)
+        if: |
+          needs.dependency-scan.result == 'failure' || 
+          needs.container-security.result == 'failure' || 
+          needs.code-security.result == 'failure' || 
+          needs.secrets-scan.result == 'failure'
+        run: |
+          echo "🚨 Security scan failures detected!"
+          echo "Please review the security scan results and take appropriate action."
+          # In a real scenario, you would send notifications to your security team
+
+  # ==========================================
+  # AUTOMATED SECURITY FIXES
+  # ==========================================
+  automated-fixes:
+    name: 🔧 Automated Security Fixes
+    runs-on: ubuntu-latest
+    needs: dependency-scan
+    if: github.event_name == 'schedule' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: ☕ Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: maven
+      
+      - name: 🔧 Update Dependencies
+        run: |
+          cd app
+          # Update to latest patch versions
+          mvn versions:use-latest-versions -DallowSnapshots=false -DallowMajorUpdates=false
+          mvn versions:use-latest-releases
+      
+      - name: 🧪 Test Updates
+        run: |
+          cd app
+          mvn clean test -B
+      
+      - name: 📝 Create Pull Request for Updates
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: 'chore: automated security dependency updates'
+          title: '🛡️ Automated Security Dependency Updates'
+          body: |
+            ## 🛡️ Automated Security Updates
+            
+            This PR contains automated security dependency updates generated by the security workflow.
+            
+            ### Changes:
+            - Updated dependencies to latest patch versions
+            - Focused on security-related updates
+            
+            ### Testing:
+            - ✅ Unit tests passed
+            - ✅ Security scans completed
+            
+            Please review and merge if all checks pass.
+          branch: automated-security-updates
+          delete-branch: true

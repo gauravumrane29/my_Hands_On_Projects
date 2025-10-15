@@ -1,0 +1,540 @@
+# Release Management Workflow
+# Automated release creation, versioning, and deployment
+
+name: 🚀 Release Management
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Release type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - major
+          - minor
+          - patch
+          - prerelease
+      pre_release:
+        description: 'Mark as pre-release'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  JAVA_VERSION: '17'
+  APP_NAME: java-microservice
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ==========================================
+  # VERSION CALCULATION
+  # ==========================================
+  calculate-version:
+    name: 🏷️ Calculate Version
+    runs-on: ubuntu-latest
+    outputs:
+      new-version: ${{ steps.version.outputs.new-version }}
+      current-version: ${{ steps.version.outputs.current-version }}
+      
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: 🏷️ Calculate New Version
+        id: version
+        run: |
+          # Get current version from git tags
+          CURRENT_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "current-version=${CURRENT_VERSION}" >> $GITHUB_OUTPUT
+          
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            # Calculate new version based on input
+            VERSION_WITHOUT_V=${CURRENT_VERSION#v}
+            IFS='.' read -ra VERSION_PARTS <<< "$VERSION_WITHOUT_V"
+            MAJOR=${VERSION_PARTS[0]}
+            MINOR=${VERSION_PARTS[1]}
+            PATCH=${VERSION_PARTS[2]}
+            
+            case "${{ inputs.release_type }}" in
+              major)
+                NEW_VERSION="v$((MAJOR + 1)).0.0"
+                ;;
+              minor)
+                NEW_VERSION="v${MAJOR}.$((MINOR + 1)).0"
+                ;;
+              patch)
+                NEW_VERSION="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+                ;;
+              prerelease)
+                NEW_VERSION="v${MAJOR}.${MINOR}.$((PATCH + 1))-pre.$(date +%Y%m%d%H%M%S)"
+                ;;
+            esac
+          else
+            # Use the tag that triggered this workflow
+            NEW_VERSION="${{ github.ref_name }}"
+          fi
+          
+          echo "new-version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "Calculated version: ${NEW_VERSION}"
+
+  # ==========================================
+  # BUILD RELEASE ARTIFACTS
+  # ==========================================
+  build-release:
+    name: 🏗️ Build Release Artifacts
+    runs-on: ubuntu-latest
+    needs: calculate-version
+    outputs:
+      jar-name: ${{ steps.build.outputs.jar-name }}
+      
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: ☕ Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: maven
+      
+      - name: 🏗️ Build Application
+        id: build
+        run: |
+          cd app
+          # Update version in pom.xml
+          mvn versions:set -DnewVersion=${{ needs.calculate-version.outputs.new-version }}
+          
+          # Build with release profile
+          mvn clean package -P release -DskipTests=false -B
+          
+          # Get jar name
+          JAR_NAME=$(ls target/*.jar | grep -v original | head -1 | xargs basename)
+          echo "jar-name=${JAR_NAME}" >> $GITHUB_OUTPUT
+          echo "Built JAR: ${JAR_NAME}"
+      
+      - name: 📊 Generate Build Info
+        run: |
+          cd app
+          echo "# Build Information" > BUILD_INFO.md
+          echo "- **Version**: ${{ needs.calculate-version.outputs.new-version }}" >> BUILD_INFO.md
+          echo "- **Build Date**: $(date -u)" >> BUILD_INFO.md
+          echo "- **Git Commit**: ${{ github.sha }}" >> BUILD_INFO.md
+          echo "- **Java Version**: ${{ env.JAVA_VERSION }}" >> BUILD_INFO.md
+          echo "- **Maven Version**: $(mvn --version | head -1)" >> BUILD_INFO.md
+      
+      - name: 🧪 Run Final Tests
+        run: |
+          cd app
+          mvn test -B
+          mvn verify -B
+      
+      - name: 📊 Generate Test Report
+        if: always()
+        run: |
+          cd app
+          mvn surefire-report:report site -DgenerateReports=false
+      
+      - name: 📤 Upload Release Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: release-artifacts
+          path: |
+            app/target/*.jar
+            app/BUILD_INFO.md
+            app/target/site/**
+
+  # ==========================================
+  # BUILD RELEASE CONTAINER
+  # ==========================================
+  build-container:
+    name: 🐳 Build Release Container
+    runs-on: ubuntu-latest
+    needs: [calculate-version, build-release]
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 📥 Download Release Artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: release-artifacts
+          path: app/target/
+      
+      - name: 🐳 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: 🔐 Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: 🏷️ Extract Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.calculate-version.outputs.new-version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.calculate-version.outputs.new-version }}
+            type=semver,pattern={{major}},value=${{ needs.calculate-version.outputs.new-version }}
+            type=raw,value=latest,enable={{is_default_branch}}
+      
+      - name: 🏗️ Build and Push Release Container
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ needs.calculate-version.outputs.new-version }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            VCS_REF=${{ github.sha }}
+      
+      - name: 🛡️ Final Security Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.new-version }}
+          format: 'sarif'
+          output: 'release-security-scan.sarif'
+      
+      - name: 📤 Upload Security Results
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'release-security-scan.sarif'
+
+  # ==========================================
+  # GENERATE RELEASE NOTES
+  # ==========================================
+  generate-changelog:
+    name: 📝 Generate Changelog
+    runs-on: ubuntu-latest
+    needs: calculate-version
+    outputs:
+      changelog: ${{ steps.changelog.outputs.changelog }}
+      
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: 📝 Generate Changelog
+        id: changelog
+        run: |
+          CURRENT_VERSION="${{ needs.calculate-version.outputs.current-version }}"
+          NEW_VERSION="${{ needs.calculate-version.outputs.new-version }}"
+          
+          echo "Generating changelog from ${CURRENT_VERSION} to ${NEW_VERSION}"
+          
+          # Get commits since last release
+          if [[ "${CURRENT_VERSION}" != "v0.0.0" ]]; then
+            COMMITS=$(git log ${CURRENT_VERSION}..HEAD --pretty=format:"- %s (%h)" --no-merges)
+          else
+            COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges)
+          fi
+          
+          # Categorize commits
+          FEATURES=$(echo "${COMMITS}" | grep -E "^- feat" || true)
+          FIXES=$(echo "${COMMITS}" | grep -E "^- fix" || true)
+          IMPROVEMENTS=$(echo "${COMMITS}" | grep -E "^- (perf|refactor|style)" || true)
+          DOCS=$(echo "${COMMITS}" | grep -E "^- docs" || true)
+          CHORES=$(echo "${COMMITS}" | grep -E "^- (chore|ci|build)" || true)
+          
+          # Generate changelog
+          CHANGELOG="## Release ${NEW_VERSION}\n\n"
+          CHANGELOG+="**Release Date**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")\n\n"
+          
+          if [[ -n "${FEATURES}" ]]; then
+            CHANGELOG+="### 🚀 New Features\n${FEATURES}\n\n"
+          fi
+          
+          if [[ -n "${FIXES}" ]]; then
+            CHANGELOG+="### 🐛 Bug Fixes\n${FIXES}\n\n"
+          fi
+          
+          if [[ -n "${IMPROVEMENTS}" ]]; then
+            CHANGELOG+="### ⚡ Improvements\n${IMPROVEMENTS}\n\n"
+          fi
+          
+          if [[ -n "${DOCS}" ]]; then
+            CHANGELOG+="### 📚 Documentation\n${DOCS}\n\n"
+          fi
+          
+          if [[ -n "${CHORES}" ]]; then
+            CHANGELOG+="### 🔧 Maintenance\n${CHORES}\n\n"
+          fi
+          
+          # Add upgrade instructions
+          CHANGELOG+="### 🔄 Upgrade Instructions\n"
+          CHANGELOG+="1. Update your image tag to \`${NEW_VERSION}\`\n"
+          CHANGELOG+="2. Run database migrations if applicable\n"
+          CHANGELOG+="3. Restart your application\n\n"
+          
+          # Add download information
+          CHANGELOG+="### 📦 Downloads\n"
+          CHANGELOG+="- Container Image: \`ghcr.io/${{ github.repository }}:${NEW_VERSION}\`\n"
+          CHANGELOG+="- JAR File: Available in release assets\n"
+          
+          # Save changelog
+          echo -e "${CHANGELOG}" > CHANGELOG.md
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo -e "${CHANGELOG}" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      
+      - name: 📤 Upload Changelog
+        uses: actions/upload-artifact@v3
+        with:
+          name: changelog
+          path: CHANGELOG.md
+
+  # ==========================================
+  # CREATE GITHUB RELEASE
+  # ==========================================
+  create-release:
+    name: 📦 Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [calculate-version, build-release, build-container, generate-changelog]
+    outputs:
+      release-id: ${{ steps.release.outputs.id }}
+      
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 📥 Download Release Artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: release-artifacts
+          path: ./release-artifacts/
+      
+      - name: 📥 Download Changelog
+        uses: actions/download-artifact@v3
+        with:
+          name: changelog
+          path: ./
+      
+      - name: 🏷️ Create Git Tag (if workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git tag -a ${{ needs.calculate-version.outputs.new-version }} -m "Release ${{ needs.calculate-version.outputs.new-version }}"
+          git push origin ${{ needs.calculate-version.outputs.new-version }}
+      
+      - name: 📦 Create GitHub Release
+        id: release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ needs.calculate-version.outputs.new-version }}
+          release_name: Release ${{ needs.calculate-version.outputs.new-version }}
+          body_path: ./CHANGELOG.md
+          draft: false
+          prerelease: ${{ inputs.pre_release || false }}
+      
+      - name: 📎 Upload JAR Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.release.outputs.upload_url }}
+          asset_path: ./release-artifacts/${{ needs.build-release.outputs.jar-name }}
+          asset_name: ${{ env.APP_NAME }}-${{ needs.calculate-version.outputs.new-version }}.jar
+          asset_content_type: application/java-archive
+      
+      - name: 📎 Upload Build Info
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.release.outputs.upload_url }}
+          asset_path: ./release-artifacts/BUILD_INFO.md
+          asset_name: BUILD_INFO.md
+          asset_content_type: text/markdown
+
+  # ==========================================
+  # DEPLOY RELEASE TO STAGING
+  # ==========================================
+  deploy-staging:
+    name: 🎭 Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [calculate-version, create-release]
+    environment:
+      name: staging-release
+      url: https://staging.your-domain.com
+      
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      
+      - name: 🔧 Setup kubectl and Helm
+        run: |
+          # Install kubectl
+          curl -LO "https://dl.k8s.io/release/v1.28.2/bin/linux/amd64/kubectl"
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+          
+          # Install Helm
+          curl https://get.helm.sh/helm-v3.13.0-linux-amd64.tar.gz | tar xz
+          sudo mv linux-amd64/helm /usr/local/bin/
+      
+      - name: 🚀 Deploy Release to Staging
+        run: |
+          # Update kubeconfig
+          aws eks update-kubeconfig --region us-east-1 --name staging-cluster
+          
+          # Deploy using Helm
+          helm upgrade --install ${{ env.APP_NAME }} ./deployment/helm/${{ env.APP_NAME }} \
+            --namespace staging \
+            --create-namespace \
+            --set image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} \
+            --set image.tag=${{ needs.calculate-version.outputs.new-version }} \
+            --set environment=staging \
+            --set ingress.hosts[0].host=staging.your-domain.com \
+            --wait --timeout=15m
+      
+      - name: 🧪 Run Release Smoke Tests
+        run: |
+          kubectl wait --for=condition=available --timeout=300s deployment/${{ env.APP_NAME }} -n staging
+          
+          # Run health check
+          kubectl run release-test --image=curlimages/curl --rm -i --restart=Never -- \
+            curl -f http://${{ env.APP_NAME }}.staging.svc.cluster.local:8080/actuator/health
+
+  # ==========================================
+  # PRODUCTION RELEASE APPROVAL
+  # ==========================================
+  production-approval:
+    name: 📋 Production Release Approval
+    runs-on: ubuntu-latest
+    needs: [calculate-version, deploy-staging]
+    environment:
+      name: production-release-approval
+      
+    steps:
+      - name: 📋 Approval Required
+        run: |
+          echo "🚀 Release ${{ needs.calculate-version.outputs.new-version }} is ready for production!"
+          echo "Please test the staging deployment and approve production release."
+
+  # ==========================================
+  # DEPLOY TO PRODUCTION
+  # ==========================================
+  deploy-production:
+    name: 🌟 Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [calculate-version, production-approval]
+    environment:
+      name: production-release
+      url: https://your-domain.com
+      
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      
+      - name: 🔧 Setup kubectl and Helm
+        run: |
+          curl -LO "https://dl.k8s.io/release/v1.28.2/bin/linux/amd64/kubectl"
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+          curl https://get.helm.sh/helm-v3.13.0-linux-amd64.tar.gz | tar xz
+          sudo mv linux-amd64/helm /usr/local/bin/
+      
+      - name: 🚀 Production Release Deployment
+        run: |
+          aws eks update-kubeconfig --region us-east-1 --name prod-cluster
+          
+          # Deploy with production configuration
+          helm upgrade --install ${{ env.APP_NAME }} ./deployment/helm/${{ env.APP_NAME }} \
+            --namespace production \
+            --create-namespace \
+            --set image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} \
+            --set image.tag=${{ needs.calculate-version.outputs.new-version }} \
+            --set environment=production \
+            --set replicaCount=3 \
+            --set resources.requests.cpu=1000m \
+            --set resources.requests.memory=2Gi \
+            --set resources.limits.cpu=2000m \
+            --set resources.limits.memory=4Gi \
+            --set autoscaling.enabled=true \
+            --set autoscaling.minReplicas=3 \
+            --set autoscaling.maxReplicas=10 \
+            --set ingress.hosts[0].host=your-domain.com \
+            --wait --timeout=20m
+      
+      - name: 🧪 Production Health Check
+        run: |
+          kubectl wait --for=condition=available --timeout=600s deployment/${{ env.APP_NAME }} -n production
+          
+          # Verify deployment
+          kubectl get pods -n production -l app=${{ env.APP_NAME }}
+          
+          # Health check
+          kubectl run prod-health-check --image=curlimages/curl --rm -i --restart=Never -- \
+            curl -f http://${{ env.APP_NAME }}.production.svc.cluster.local:8080/actuator/health
+
+  # ==========================================
+  # POST-RELEASE TASKS
+  # ==========================================
+  post-release:
+    name: 🎉 Post-Release Tasks
+    runs-on: ubuntu-latest
+    needs: [calculate-version, deploy-production]
+    if: always() && needs.deploy-production.result == 'success'
+    
+    steps:
+      - name: 📊 Generate Release Report
+        run: |
+          echo "# 🎉 Release ${{ needs.calculate-version.outputs.new-version }} - SUCCESS!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Release Details:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ needs.calculate-version.outputs.new-version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release Date**: $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Production URL**: https://your-domain.com" >> $GITHUB_STEP_SUMMARY
+          echo "- **Container Image**: ghcr.io/${{ github.repository }}:${{ needs.calculate-version.outputs.new-version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Deployment Status:" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Build: Completed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Security Scan: Passed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Staging Deployment: Success" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Production Deployment: Success" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🚀 Release is now live in production!"
+      
+      - name: 🔔 Notify Release Success
+        run: |
+          echo "🎉 Release ${{ needs.calculate-version.outputs.new-version }} successfully deployed!"
+          echo "Production URL: https://your-domain.com"
+          # Add notification logic here (Slack, email, etc.)

@@ -1,0 +1,329 @@
+# Full-Stack Pull Request Workflow
+# Automated validation and testing for pull requests on backend and frontend changes
+
+name: 🔍 Full-Stack PR Validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [ main, develop ]
+  pull_request_review:
+    types: [submitted]
+
+env:
+  JAVA_VERSION: '17'
+  NODE_VERSION: '18'
+  APP_NAME: java-microservice
+
+jobs:
+  # ==========================================
+  # PR VALIDATION
+  # ==========================================
+  pr-validation:
+    name: 🔍 PR Validation
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: 🏷️ PR Information
+        run: |
+          echo "PR Title: ${{ github.event.pull_request.title }}"
+          echo "PR Author: ${{ github.event.pull_request.user.login }}"
+          echo "Base Branch: ${{ github.event.pull_request.base.ref }}"
+          echo "Head Branch: ${{ github.event.pull_request.head.ref }}"
+          echo "Changed Files:"
+          git diff --name-only ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+      
+      - name: 🔍 Validate PR Title
+        uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            style
+            refactor
+            perf
+            test
+            build
+            ci
+            chore
+            revert
+          requireScope: false
+          subjectPattern: ^(?![A-Z]).+$
+          subjectPatternError: |
+            The subject "{subject}" found in the pull request title "{title}"
+            didn't match the configured pattern. Please ensure that the subject
+            doesn't start with an uppercase character.
+      
+      - name: 🔍 Check for Breaking Changes
+        run: |
+          # Check if there are breaking changes in the code
+          if git diff --name-only ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} | grep -E "(pom.xml|Dockerfile|deployment/)" > /dev/null; then
+            echo "⚠️ Potential breaking changes detected in infrastructure files"
+            echo "Please ensure backward compatibility or coordinate deployment"
+          fi
+
+  # ==========================================
+  # AUTOMATED TESTING
+  # ==========================================
+  automated-tests:
+    name: 🧪 Automated Testing
+    runs-on: ubuntu-latest
+    needs: pr-validation
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: ☕ Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: maven
+      
+      - name: 🧪 Run Tests with Coverage
+        run: |
+          cd app
+          mvn clean test jacoco:report -B
+      
+      - name: 📊 Coverage Report
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./app/target/site/jacoco/jacoco.xml
+          flags: unittests
+          name: PR Coverage Report
+      
+      - name: 📤 Upload Test Results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: pr-test-results
+          path: |
+            app/target/surefire-reports/**
+            app/target/site/jacoco/**
+
+  # ==========================================
+  # SECURITY SCAN
+  # ==========================================
+  security-scan:
+    name: 🛡️ Security Scan
+    runs-on: ubuntu-latest
+    needs: pr-validation
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 🛡️ Run Dependency Check
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: ${{ env.APP_NAME }}
+          path: './app'
+          format: 'ALL'
+      
+      - name: 📤 Upload Dependency Check Results
+        uses: actions/upload-artifact@v3
+        with:
+          name: dependency-check-report
+          path: reports/
+
+  # ==========================================
+  # BUILD VERIFICATION
+  # ==========================================
+  build-verification:
+    name: 🏗️ Build Verification
+    runs-on: ubuntu-latest
+    needs: pr-validation
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: ☕ Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: maven
+      
+      - name: 🏗️ Build Application
+        run: |
+          cd app
+          mvn clean package -DskipTests -B
+      
+      - name: 🐳 Test Docker Build
+        run: |
+          cd app
+          docker build -t pr-test:${{ github.event.pull_request.number }} .
+      
+      - name: 🧪 Test Container
+        run: |
+          # Run container briefly to test startup
+          docker run -d --name test-container -p 8080:8080 pr-test:${{ github.event.pull_request.number }}
+          sleep 30
+          docker logs test-container
+          docker stop test-container
+          docker rm test-container
+
+  # ==========================================
+  # CODE QUALITY GATE
+  # ==========================================
+  quality-gate:
+    name: 🚪 Quality Gate
+    runs-on: ubuntu-latest
+    needs: [automated-tests, security-scan, build-verification]
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: ☕ Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: maven
+      
+      - name: 📊 SonarQube Quality Gate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          cd app
+          if [[ -n "${{ secrets.SONAR_TOKEN }}" ]]; then
+            mvn sonar:sonar \
+              -Dsonar.projectKey=${{ github.repository_owner }}_${{ github.event.repository.name }} \
+              -Dsonar.organization=${{ github.repository_owner }} \
+              -Dsonar.host.url=https://sonarcloud.io \
+              -Dsonar.login=${{ secrets.SONAR_TOKEN }} \
+              -Dsonar.pullrequest.key=${{ github.event.pull_request.number }} \
+              -Dsonar.pullrequest.branch=${{ github.event.pull_request.head.ref }} \
+              -Dsonar.pullrequest.base=${{ github.event.pull_request.base.ref }}
+          else
+            echo "⚠️ SonarQube analysis skipped - SONAR_TOKEN not configured"
+          fi
+      
+      - name: ✅ Quality Gate Summary
+        run: |
+          echo "=== Quality Gate Results ==="
+          echo "✅ Unit Tests: Passed"
+          echo "✅ Security Scan: Completed"
+          echo "✅ Build Verification: Passed"
+          echo "✅ Code Quality: Analyzed"
+          echo ""
+          echo "PR is ready for review! 🎉"
+
+  # ==========================================
+  # AUTO-MERGE (Optional)
+  # ==========================================
+  auto-merge:
+    name: 🤖 Auto-merge
+    runs-on: ubuntu-latest
+    needs: quality-gate
+    if: |
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'automerge')
+    
+    steps:
+      - name: 🤖 Enable Auto-merge
+        uses: peter-evans/enable-pull-request-automerge@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          pull-request-number: ${{ github.event.pull_request.number }}
+          merge-method: squash
+
+  # ==========================================
+  # DEPLOYMENT PREVIEW
+  # ==========================================
+  deployment-preview:
+    name: 🔮 Deployment Preview
+    runs-on: ubuntu-latest
+    needs: quality-gate
+    if: github.event.pull_request.base.ref == 'main'
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 🔮 Generate Deployment Preview
+        run: |
+          echo "## 🚀 Deployment Preview" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This PR will trigger the following deployments when merged:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **Development**: Automatic deployment" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **Staging**: Automatic deployment" >> $GITHUB_STEP_SUMMARY
+          echo "- 🔒 **Production**: Manual approval required" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Changes in this PR:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          git diff --name-only ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+      
+      - name: 💬 Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comment = `## 🔮 Deployment Preview
+            
+            This PR has passed all quality gates and is ready for deployment! 🎉
+            
+            **Next Steps:**
+            - ✅ Merge this PR to trigger staging deployment
+            - 🔍 Test in staging environment
+            - 🚀 Approve production deployment when ready
+            
+            **Quality Gate Results:**
+            - ✅ Unit Tests: Passed
+            - ✅ Security Scan: Completed  
+            - ✅ Build Verification: Passed
+            - ✅ Code Quality: Meets standards
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+  # ==========================================
+  # PR SUMMARY
+  # ==========================================
+  pr-summary:
+    name: 📋 PR Summary
+    runs-on: ubuntu-latest
+    needs: [automated-tests, security-scan, build-verification, quality-gate]
+    if: always()
+    
+    steps:
+      - name: 📋 Generate Summary
+        run: |
+          echo "## 📋 Pull Request Validation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**PR #${{ github.event.pull_request.number }}**: ${{ github.event.pull_request.title }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Author**: @${{ github.event.pull_request.user.login }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Base Branch**: ${{ github.event.pull_request.base.ref }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Head Branch**: ${{ github.event.pull_request.head.ref }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Validation Results:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Automated Tests**: ${{ needs.automated-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Security Scan**: ${{ needs.security-scan.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Verification**: ${{ needs.build-verification.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Quality Gate**: ${{ needs.quality-gate.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ needs.quality-gate.result }}" == "success" ]]; then
+            echo "🎉 **Status**: Ready to merge!" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Status**: Requires attention" >> $GITHUB_STEP_SUMMARY
+          fi

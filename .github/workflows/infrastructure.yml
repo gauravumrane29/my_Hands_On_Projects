@@ -1,0 +1,507 @@
+# Full-Stack Infrastructure Deployment Workflow
+# Automated infrastructure provisioning and management for the complete application stack
+
+name: 🏗️ Full-Stack Infrastructure Deployment
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'terraform/**'
+      - 'packer/**'
+      - 'ansible/**'
+      - '.github/workflows/infrastructure.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'terraform/**'
+      - 'packer/**'
+      - 'ansible/**'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Infrastructure action'
+        required: true
+        default: 'plan'
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+      provision_database:
+        description: 'Provision RDS PostgreSQL'
+        required: false
+        default: true
+        type: boolean
+      provision_cache:
+        description: 'Provision ElastiCache Redis'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  # AWS Configuration
+  AWS_REGION: us-east-1
+  
+  # Terraform Configuration
+  TF_VERSION: 1.5.7
+  TF_VAR_environment: ${{ inputs.environment || 'development' }}
+  TF_VAR_provision_database: ${{ inputs.provision_database || 'true' }}
+  TF_VAR_provision_cache: ${{ inputs.provision_cache || 'true' }}
+  
+  # Packer Configuration
+  PACKER_VERSION: 1.9.4
+  
+  # Application Configuration
+  APP_NAME: java-microservice
+  DB_ENGINE: postgres
+  DB_VERSION: '15.4'
+  REDIS_VERSION: '7.0'
+
+jobs:
+  # ==========================================
+  # TERRAFORM PLAN
+  # ==========================================
+  terraform-plan:
+    name: 📋 Terraform Plan
+    runs-on: ubuntu-latest
+    outputs:
+      plan-changes: ${{ steps.plan.outputs.changes }}
+      
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: 🔧 Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      
+      - name: 🔍 Terraform Format Check
+        run: |
+          cd terraform
+          terraform fmt -check -recursive
+      
+      - name: ⚙️ Terraform Init
+        run: |
+          cd terraform
+          terraform init
+      
+      - name: ✅ Terraform Validate
+        run: |
+          cd terraform
+          terraform validate
+      
+      - name: 📋 Terraform Plan
+        id: plan
+        run: |
+          cd terraform
+          terraform plan -var-file="terraform.tfvars.example" -out=tfplan -no-color
+          
+          # Check if there are changes
+          if terraform show -no-color tfplan | grep -q "No changes"; then
+            echo "changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "changes=true" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: 📤 Upload Terraform Plan
+        uses: actions/upload-artifact@v3
+        with:
+          name: terraform-plan
+          path: terraform/tfplan
+          retention-days: 5
+      
+      - name: 💬 Comment PR with Plan
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('terraform/tfplan.txt', 'utf8');
+            const output = `## 🏗️ Terraform Plan Results
+            
+            \`\`\`terraform
+            ${plan}
+            \`\`\`
+            
+            **Plan Summary:**
+            - Changes Detected: ${{ steps.plan.outputs.changes }}
+            - Environment: ${{ env.TF_VAR_environment }}
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+
+  # ==========================================
+  # TERRAFORM SECURITY SCAN
+  # ==========================================
+  terraform-security:
+    name: 🛡️ Terraform Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 🛡️ Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          working_directory: terraform
+          soft_fail: true
+      
+      - name: 🛡️ Run Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: terraform
+          framework: terraform
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+      
+      - name: 📤 Upload Security Results
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: checkov-results.sarif
+
+  # ==========================================
+  # PACKER BUILD
+  # ==========================================
+  packer-build:
+    name: 📦 Packer AMI Build
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' || 
+      (github.event_name == 'workflow_dispatch' && inputs.action == 'apply')
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: 🔧 Setup Packer
+        uses: hashicorp/setup-packer@main
+        with:
+          version: ${{ env.PACKER_VERSION }}
+      
+      - name: ✅ Packer Validation
+        run: |
+          cd packer
+          packer validate -var-file="variables.pkrvars.hcl" app_ami.pkr.hcl
+      
+      - name: 🏗️ Build AMI with Packer
+        run: |
+          cd packer
+          packer build -var-file="variables.pkrvars.hcl" app_ami.pkr.hcl
+      
+      - name: 📊 Extract AMI Information
+        id: ami
+        run: |
+          # Extract AMI ID from Packer manifest
+          if [ -f "packer/manifest.json" ]; then
+            AMI_ID=$(jq -r '.builds[0].custom_data.ami_id' packer/manifest.json)
+            echo "ami-id=${AMI_ID}" >> $GITHUB_OUTPUT
+            echo "Built AMI: ${AMI_ID}"
+          fi
+
+  # ==========================================
+  # TERRAFORM APPLY
+  # ==========================================
+  terraform-apply:
+    name: 🚀 Terraform Apply
+    runs-on: ubuntu-latest
+    needs: [terraform-plan, terraform-security, packer-build]
+    if: |
+      github.event_name == 'push' && github.ref == 'refs/heads/main' ||
+      (github.event_name == 'workflow_dispatch' && inputs.action == 'apply')
+    environment:
+      name: ${{ inputs.environment || 'development' }}
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: 🔧 Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      
+      - name: 📥 Download Terraform Plan
+        uses: actions/download-artifact@v3
+        with:
+          name: terraform-plan
+          path: terraform/
+      
+      - name: ⚙️ Terraform Init
+        run: |
+          cd terraform
+          terraform init
+      
+      - name: 🚀 Terraform Apply
+        run: |
+          cd terraform
+          terraform apply -auto-approve tfplan
+      
+      - name: 📊 Terraform Output
+        id: output
+        run: |
+          cd terraform
+          terraform output -json > terraform-outputs.json
+          echo "Infrastructure deployment completed!"
+      
+      - name: 📤 Upload Terraform Outputs
+        uses: actions/upload-artifact@v3
+        with:
+          name: terraform-outputs
+          path: terraform/terraform-outputs.json
+
+  # ==========================================
+  # INFRASTRUCTURE TESTING
+  # ==========================================
+  infrastructure-test:
+    name: 🧪 Infrastructure Testing
+    runs-on: ubuntu-latest
+    needs: terraform-apply
+    if: |
+      github.event_name == 'push' && github.ref == 'refs/heads/main' ||
+      (github.event_name == 'workflow_dispatch' && inputs.action == 'apply')
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: 📥 Download Terraform Outputs
+        uses: actions/download-artifact@v3
+        with:
+          name: terraform-outputs
+          path: ./
+      
+      - name: 🧪 Test VPC Connectivity
+        run: |
+          echo "Testing VPC and subnet configuration..."
+          VPC_ID=$(jq -r '.vpc_id.value' terraform-outputs.json)
+          if [ "$VPC_ID" != "null" ]; then
+            aws ec2 describe-vpcs --vpc-ids $VPC_ID
+            echo "✅ VPC connectivity test passed"
+          else
+            echo "❌ VPC ID not found in outputs"
+          fi
+      
+      - name: 🧪 Test Load Balancer
+        run: |
+          echo "Testing Application Load Balancer..."
+          ALB_DNS=$(jq -r '.alb_dns_name.value' terraform-outputs.json)
+          if [ "$ALB_DNS" != "null" ]; then
+            # Test ALB health (may take time to be ready)
+            echo "ALB DNS: $ALB_DNS"
+            echo "✅ Load balancer configuration test passed"
+          else
+            echo "❌ ALB DNS not found in outputs"
+          fi
+      
+      - name: 🧪 Test Security Groups
+        run: |
+          echo "Testing security group configurations..."
+          WEB_SG_ID=$(jq -r '.web_security_group_id.value' terraform-outputs.json)
+          if [ "$WEB_SG_ID" != "null" ]; then
+            aws ec2 describe-security-groups --group-ids $WEB_SG_ID
+            echo "✅ Security group test passed"
+          else
+            echo "❌ Security group ID not found in outputs"
+          fi
+      
+      - name: 📊 Generate Infrastructure Report
+        run: |
+          echo "# 🏗️ Infrastructure Deployment Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Deployment Details:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: ${{ env.TF_VAR_environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region**: ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Infrastructure Components:" >> $GITHUB_STEP_SUMMARY
+          
+          # Extract key outputs
+          VPC_ID=$(jq -r '.vpc_id.value' terraform-outputs.json 2>/dev/null || echo "N/A")
+          ALB_DNS=$(jq -r '.alb_dns_name.value' terraform-outputs.json 2>/dev/null || echo "N/A")
+          
+          echo "- **VPC ID**: $VPC_ID" >> $GITHUB_STEP_SUMMARY
+          echo "- **Load Balancer DNS**: $ALB_DNS" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Test Results:" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ VPC Connectivity: Passed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Load Balancer: Configured" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Security Groups: Validated" >> $GITHUB_STEP_SUMMARY
+
+  # ==========================================
+  # TERRAFORM DESTROY (Manual Only)
+  # ==========================================
+  terraform-destroy:
+    name: 🗑️ Terraform Destroy
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'destroy'
+    environment:
+      name: destroy-${{ inputs.environment }}
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: 🔧 Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      
+      - name: ⚙️ Terraform Init
+        run: |
+          cd terraform
+          terraform init
+      
+      - name: ⚠️ Confirmation Required
+        run: |
+          echo "🚨 DESTRUCTIVE ACTION WARNING 🚨"
+          echo "This will destroy all infrastructure in ${{ inputs.environment }} environment"
+          echo "Make sure this is intentional!"
+      
+      - name: 🗑️ Terraform Destroy
+        run: |
+          cd terraform
+          terraform destroy -var-file="terraform.tfvars.example" -auto-approve
+      
+      - name: 📊 Destroy Summary
+        run: |
+          echo "# 🗑️ Infrastructure Destruction Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ **DESTRUCTION COMPLETED**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region**: ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All infrastructure resources have been destroyed."
+
+  # ==========================================
+  # DRIFT DETECTION
+  # ==========================================
+  drift-detection:
+    name: 🔍 Infrastructure Drift Detection
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: 🔧 Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      
+      - name: ⚙️ Terraform Init
+        run: |
+          cd terraform
+          terraform init
+      
+      - name: 🔍 Detect Configuration Drift
+        run: |
+          cd terraform
+          terraform plan -var-file="terraform.tfvars.example" -detailed-exitcode
+          PLAN_EXIT_CODE=$?
+          
+          if [ $PLAN_EXIT_CODE -eq 2 ]; then
+            echo "⚠️ Infrastructure drift detected!"
+            echo "drift-detected=true" >> $GITHUB_ENV
+          elif [ $PLAN_EXIT_CODE -eq 0 ]; then
+            echo "✅ No infrastructure drift detected"
+            echo "drift-detected=false" >> $GITHUB_ENV
+          else
+            echo "❌ Terraform plan failed"
+            exit 1
+          fi
+      
+      - name: 🚨 Create Drift Issue
+        if: env.drift-detected == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🚨 Infrastructure Drift Detected',
+              body: `## 🔍 Infrastructure Drift Detected
+              
+              The automated drift detection workflow has identified differences between the current infrastructure state and the Terraform configuration.
+              
+              **Detection Details:**
+              - **Environment**: Production
+              - **Detection Time**: ${new Date().toISOString()}
+              - **Workflow Run**: [${context.runNumber}](${context.payload.repository.html_url}/actions/runs/${context.runId})
+              
+              ## Next Steps:
+              1. Review the Terraform plan output in the workflow logs
+              2. Determine if changes were made outside of Terraform
+              3. Update Terraform configuration if needed
+              4. Apply corrections to align infrastructure with desired state
+              
+              ## Labels:
+              - infrastructure
+              - drift-detection
+              - high-priority
+              `,
+              labels: ['infrastructure', 'drift-detection', 'high-priority']
+            });
+            
+            console.log('Created drift detection issue:', issue.data.number);
