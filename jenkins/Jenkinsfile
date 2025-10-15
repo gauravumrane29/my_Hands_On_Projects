@@ -9,7 +9,7 @@ pipeline {
         retry(2)
         skipStagesAfterUnstable()
         timestamps()
-        ansiColor('xterm')
+        // ansiColor('xterm')  // Commented out - requires AnsiColor plugin installation
         parallelsAlwaysFailFast()
     }
     

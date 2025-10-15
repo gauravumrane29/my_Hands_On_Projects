@@ -1,6 +1,9 @@
 # Jenkins CI/CD Pipeline Documentation
 
-> 📋 **Note**: For details about recent folder cleanup and file organization, see [JENKINS_CLEANUP_ANALYSIS.md](./JENKINS_CLEANUP_ANALYSIS.md)
+> 📋 **Quick Links**: 
+> - [Plugin Installation Guide](./PLUGIN_INSTALLATION.md) - Fix "Invalid option type" errors
+> - [Troubleshooting Guide](./TROUBLESHOOTING.md) - Common errors and solutions
+> - [Folder Cleanup Analysis](./JENKINS_CLEANUP_ANALYSIS.md) - File organization details
 
 ## Overview
 
