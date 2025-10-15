@@ -1,6 +1,13 @@
 pipeline {
-    agent {
-        label 'docker-maven-node'  // Use Jenkins agent with Docker, Maven, and Node.js
+    agent any  // Use any available agent - tools will be auto-installed
+    // agent {
+    //     label 'docker-maven-node'  // Use Jenkins agent with Docker, Maven, and Node.js
+    // }
+    
+    tools {
+        maven 'Maven-3.9'      // Auto-install Maven (configure in Global Tool Configuration)
+        nodejs 'NodeJS-18'     // Auto-install Node.js (configure in Global Tool Configuration)
+        // Docker is expected to be available on the agent
     }
     
     options {
